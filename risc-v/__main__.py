@@ -13,23 +13,25 @@ pc = emu.new_var("_PC")
 
 code = emu.new_list("_CODE")
 
+uart = emu.new_list("_UART")
+
 and_lut_contents = []
-for a in range(255):
-                for b in range(255):
+for a in range(256):
+                for b in range(256):
                                 and_lut_contents.append(a & b)
 
 and_lut = emu.new_list("_AND_LUT", and_lut_contents)
 
 or_lut_contents = []
-for a in range(255):
-                for b in range(255):
+for a in range(256):
+                for b in range(256):
                                 or_lut_contents.append(a | b)
 
 or_lut = emu.new_list("_OR_LUT", or_lut_contents)
 
 xor_lut_contents = []
-for a in range(255):
-                for b in range(255):
+for a in range(256):
+                for b in range(256):
                                 xor_lut_contents.append(a ^ b)
 
 xor_lut = emu.new_list("_XOR_LUT", xor_lut_contents)
@@ -102,7 +104,7 @@ def sub (locals, a, b): return [
                 ]
 ]
 
-@emu.proc_def()
+@emu.proc_def(inline_only=True)
 def b_xor (locals, a, b): return [
                 locals.result <= xor_lut[(a & 0xff) + ((b & 0xff) * 256)] # 0:7
                                 + (xor_lut[((a >> 8) & 0xff) + (((b >> 8) & 0xff) * 256)] << 8) # 8:15
@@ -110,7 +112,7 @@ def b_xor (locals, a, b): return [
                                 + (xor_lut[((a >> 24) & 0xff) + (((b >> 24) & 0xff) * 256)] << 24) # 24:31
 ]
 
-@emu.proc_def()
+@emu.proc_def(inline_only=True)
 def b_or (locals, a, b): return [
                 locals.result <= or_lut[(a & 0xff) + ((b & 0xff) * 256)] # 0:7
                                 + (or_lut[((a >> 8) & 0xff) + (((b >> 8) & 0xff) * 256)] << 8) # 8:15
@@ -118,7 +120,7 @@ def b_or (locals, a, b): return [
                                 + (or_lut[((a >> 24) & 0xff) + (((b >> 24) & 0xff) * 256)] << 24) # 24:31
 ]
 
-@emu.proc_def()
+@emu.proc_def(inline_only=True)
 def b_and (locals, a, b): return [
                 locals.result <= and_lut[(a & 0xff) + ((b & 0xff) * 256)] # 0:7
                                 + (and_lut[((a >> 8) & 0xff) + (((b >> 8) & 0xff) * 256)] << 8) # 8:15
@@ -126,24 +128,23 @@ def b_and (locals, a, b): return [
                                 + (and_lut[((a >> 24) & 0xff) + (((b >> 24) & 0xff) * 256)] << 24) # 24:31
 ]
 
-
-@emu.proc_def()
+@emu.proc_def(inline_only=True)
 def b_shift_left (locals, a, b): return [
                 locals.result <= (a << b) & 0xffffffff
 ]
 
-@emu.proc_def()
+@emu.proc_def(inline_only=True)
 def b_shift_right (locals, a, b): return [
                 locals.result <= a >> b
 ]
 
-@emu.proc_def()
+@emu.proc_def(inline_only=True)
 def b_shift_right_arith (locals, a, b): return [
                 toSigned32(a).inline(),
                 locals.result <= toSigned32.result >> b
 ]
 
-@emu.proc_def()
+@emu.proc_def(inline_only=True)
 def less_than_unsigned (locals, a, b): return [
                 If (a < b) [
                                 locals.result <= 1
@@ -152,7 +153,7 @@ def less_than_unsigned (locals, a, b): return [
                 ]
 ]
 
-@emu.proc_def()
+@emu.proc_def(inline_only=True)
 def less_than_signed (locals, a, b): return [
                 toSigned32(a).inline(),
                 locals.signed <= toSigned32.result,
@@ -234,6 +235,9 @@ def mem_store8 (locals, index, value): return [
 
 @emu.proc_def()
 def hw_store8 (locals, addr, value): return [
+                If (addr == 0x10000000) [
+                                uart.append(value)
+                ]
 ]
 
 @emu.proc_def(inline_only=True)
@@ -520,7 +524,7 @@ def execute (locals, inst): return [
                                 decode_u_type(inst).inline(),
                                 regs[locals.rd] <= locals.imm
                 ],
-                If (locals.opcode == 0b0110111) [ # auipc
+                If (locals.opcode == 0b0010111) [ # auipc
                                 decode_u_type(inst).inline(),
                                 regs[locals.rd] <= locals.imm + pc
                 ]
