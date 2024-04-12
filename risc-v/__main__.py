@@ -36,8 +36,12 @@ for a in range(256):
 
 xor_lut = emu.new_list("_XOR_LUT", xor_lut_contents)
 
+ascii_lut = emu.new_var("_ASCII", ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz')
+
 @emu.proc_def()
 def reset (locals): return [
+                uart.delete_all(),
+                uart.append(""),
                 locals.i[:DRAM_SIZE:1] >> [
                                 dram[locals.i] <= 0
                 ],
@@ -236,7 +240,7 @@ def mem_store8 (locals, index, value): return [
 @emu.proc_def()
 def hw_store8 (locals, addr, value): return [
                 If (addr == 0x10000000) [
-                                uart.append(value)
+                                uart[uart.len()-1] <= uart[uart.len()-1].join(ascii_lut[value-32])
                 ]
 ]
 
