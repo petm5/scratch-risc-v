@@ -4,12 +4,13 @@ project = Project()
 
 emu = project.new_sprite("RISCV32")
 
-DRAM_SIZE = 2 * 1000 * 1000 # 2 MB
+DRAM_SIZE = 4 * 1000 * 1000 # 4 MB
 DRAM_BASE = 0x80000000
 
 dram = emu.new_list("_DRAM", [0] * DRAM_SIZE)
 regs = emu.new_list("_REGS", [0] * 32)
 pc = emu.new_var("_PC")
+ticks = emu.new_var("_TICKS")
 
 code = emu.new_list("_CODE", monitor=[240, 145, 120, 20])
 
@@ -37,6 +38,7 @@ for a in range(256):
 xor_lut = emu.new_list("_XOR_LUT", xor_lut_contents)
 
 ascii_lut = emu.new_var("_ASCII", ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz')
+hex_lut = emu.new_var("_HEXA", '0123456789abcdef')
 
 @emu.proc_def()
 def reset (locals): return [
@@ -52,7 +54,8 @@ def reset (locals): return [
                                 regs[locals.i] <= 0
                 ],
                 regs[2] <= DRAM_SIZE,
-                pc <= DRAM_BASE
+                pc <= DRAM_BASE,
+                ticks <= 0
 ]
 
 ### Functions for sign extension
@@ -148,7 +151,8 @@ def b_shift_right (locals, a, b): return [
 @emu.proc_def(inline_only=True)
 def b_shift_right_arith (locals, a, b): return [
                 toSigned32(a).inline(),
-                locals.result <= toSigned32.result >> b
+                toUnsigned32(toSigned32.result >> b).inline(),
+                locals.result <= toUnsigned32.result
 ]
 
 @emu.proc_def(inline_only=True)
@@ -562,8 +566,9 @@ def execute (locals, inst): return [
                 If (locals.opcode == 0b1100111) [ # jalr
                                 locals.matched <= 1,
                                 decode_i_type(inst).inline(),
-                                regs[locals.rd] <= pc,
-                                pc <= regs[locals.rs1] + locals.imm
+                                locals.temp <= pc,
+                                pc <= (regs[locals.rs1] + locals.imm) & 0xffffffff,
+                                regs[locals.rd] <= locals.temp,
                 ],
                 If (locals.opcode == 0b0110111) [ # lui
                                 locals.matched <= 1,
@@ -579,14 +584,54 @@ def execute (locals, inst): return [
                                 locals.matched <= 1,
                 ],
                 If (locals.matched == 0) [
-                                StopAll()
+                                breakpoint()
                 ]
 ]
 
 @emu.proc_def()
+def to_hex (locals, value): return [
+                locals.result <= hex_lut[(value >> 28) & 0xf]
+                                .join(hex_lut[(value >> 24) & 0xf])
+                                .join(hex_lut[(value >> 20) & 0xf])
+                                .join(hex_lut[(value >> 16) & 0xf])
+                                .join(hex_lut[(value >> 12) & 0xf])
+                                .join(hex_lut[(value >> 8) & 0xf])
+                                .join(hex_lut[(value >> 4) & 0xf])
+                                .join(hex_lut[value & 0xf])
+]
+
+@emu.proc_def()
+def breakpoint (locals): return [
+                If (execute.matched == 0) [
+                                uart.append("* Unknown instruction encountered")
+                ],
+                If (pc - DRAM_BASE > DRAM_SIZE) [
+                                uart.append("* PC exceeded DRAM size"),
+                                uart.append(Literal("PC: ").join(pc)),
+                                uart.append(Literal("DRAM_BASE: ").join(DRAM_BASE)),
+                                uart.append(Literal("DRAM_SIZE: ").join(DRAM_SIZE))
+                ],
+                If (pc == 0) [
+                                uart.append("* Jump to null address")
+                ],
+                to_hex(pc),
+                uart.append(Literal("PC: ").join(to_hex.result)),
+                to_hex(bus_result),
+                uart.append(Literal("inst: ").join(to_hex.result)),
+                uart.append(Literal("tick: ").join(ticks)),
+                uart.append("--- Registers ---"),
+                locals.i[:regs.len():1] >> [
+                                to_hex(regs[locals.i]),
+                                uart.append(locals.i.join(": 0x").join(to_hex.result))
+                ],
+                StopAll()
+]
+
+@emu.proc_def()
 def tick (locals): return [
+                ticks <= ticks + 1,
                 If ((pc - DRAM_BASE > DRAM_SIZE).OR(pc == 0)) [
-                             StopAll()   
+                             breakpoint()   
                 ],
                 regs[0] <= 0,
                 fetch(pc).inline(),
