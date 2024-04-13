@@ -42,4 +42,4 @@ _start:	li a1, 0x10000000
 	addi a0, x0, '\n'
 	sb a0, (a1)
 
-loop:	jal loop
+loop:	j loop

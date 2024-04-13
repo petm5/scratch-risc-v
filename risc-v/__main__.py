@@ -240,7 +240,11 @@ def mem_store8 (locals, index, value): return [
 @emu.proc_def()
 def hw_store8 (locals, addr, value): return [
                 If (addr == 0x10000000) [
-                                uart[uart.len()-1] <= uart[uart.len()-1].join(ascii_lut[value-32])
+                                If (value == 10) [
+                                                uart.append("")
+                                ].Else [
+                                                uart[uart.len()-1] <= uart[uart.len()-1].join(ascii_lut[value-32])
+                                ]
                 ]
 ]
 
@@ -517,9 +521,9 @@ def execute (locals, inst): return [
                 If (locals.opcode == 0b1101111) [ # jal
                                 decode_j_type(inst).inline(),
                                 regs[locals.rd] <= pc + 4,
-                                pc <= pc + locals.imm
+                                pc <= pc - 4 + locals.imm
                 ],
-                If (locals.opcode == 0b1101111) [ # jalr
+                If (locals.opcode == 0b1100111) [ # jalr
                                 decode_i_type(inst).inline(),
                                 regs[locals.rd] <= pc + 4,
                                 pc <= regs[locals.rs1] + locals.imm
