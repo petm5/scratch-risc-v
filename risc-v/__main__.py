@@ -4,16 +4,16 @@ project = Project()
 
 emu = project.new_sprite("RISCV32")
 
-DRAM_SIZE = 4 * 1000 * 1000 # 4 MB
+DRAM_SIZE = 2 * 1000 * 1000 # 2 MB
 DRAM_BASE = 0x80000000
 
 dram = emu.new_list("_DRAM", [0] * DRAM_SIZE)
 regs = emu.new_list("_REGS", [0] * 32)
 pc = emu.new_var("_PC")
 
-code = emu.new_list("_CODE")
+code = emu.new_list("_CODE", monitor=[240, 145, 120, 20])
 
-uart = emu.new_list("_UART")
+uart = emu.new_list("_UART", monitor=[0, 0, 480-2, 140])
 
 and_lut_contents = []
 for a in range(256):
@@ -97,12 +97,15 @@ def toUnsigned32 (locals, int): return [
 
 @emu.proc_def(inline_only=True)
 def add (locals, a, b): return [
-                locals.result <= (a + b) & 0xffffffff
+                locals.result <= a + b,
+                If (locals.result > 0xffffffff) [
+                                locals.result <= 0xffffffff
+                ]
 ]
 
 @emu.proc_def(inline_only=True)
 def sub (locals, a, b): return [
-                locals.result <= (a - b) & 0xffffffff,
+                locals.result <= a - b,
                 If (locals.result < 0) [
                                 locals.result <= 0
                 ]
@@ -306,8 +309,7 @@ def decode_i_type (locals, inst): return [
                 execute.rs1 <= (inst >> 15) & 0x1f,
                 execute.funct3 <= (inst >> 12) & 0x7,
                 toSigned32(inst).inline(),
-                toUnsigned32(toSigned32.result >> 20).inline(),
-                execute.imm <= toUnsigned32.result
+                execute.imm <= toSigned32.result >> 20
 ]
 
 @emu.proc_def(inline_only=True)
@@ -326,8 +328,7 @@ def decode_b_type (locals, inst): return [
                 execute.rs2 <= (inst >> 20) & 0x1f,
                 execute.funct3 <= (inst >> 12) & 0x7,
                 toSigned32(inst).inline(),
-                toUnsigned32(toSigned32.result >> 31).inline(),
-                execute.imm <= (toUnsigned32.result << 12) + (((inst >> 7) & 0x01) << 11) + (((inst >> 25) & 0x1f) << 5) + (((inst >> 8) & 0x0f) << 1)
+                execute.imm <= ((toSigned32.result >> 31) << 12) + (((inst >> 7) & 0x01) << 11) + (((inst >> 25) & 0x3f) << 5) + (((inst >> 8) & 0x0f) << 1)
 ]
 
 @emu.proc_def(inline_only=True)
@@ -341,55 +342,66 @@ def decode_j_type (locals, inst): return [
                 execute.rd <= (inst >> 7) & 0x1f,
                 toSigned32(inst).inline(),
                 toUnsigned32(toSigned32.result >> 31).inline(),
-                execute.imm <= (toUnsigned32.result << 20) + (((inst >> 12) & 0xff) << 12) + (((inst >> 20) & 0x01) << 11) + ((inst >> 21) & 0x03ff) << 1
+                execute.imm <= ((toUnsigned32.result << 20) & 0x0fff) + (((inst >> 12) & 0xff) << 12) + (((inst >> 20) & 0x01) << 11) + (((inst >> 21) & 0x03ff) << 1)
 ]
 
 @emu.proc_def(inline_only=True)
 def execute (locals, inst): return [
                 locals.opcode <= inst & 0x7f,
+                locals.matched <= 0,
                 If (locals.opcode == 0b0110011) [
                                 decode_r_type(inst).inline(),
                                 If (locals.funct3 == 0x0) [
                                                 If (locals.funct7 == 0x0) [ # add
+                                                                locals.matched <= 1,
                                                                 add(regs[locals.rs1], regs[locals.rs2]).inline(),
                                                                 regs[locals.rd] <= add.result
                                                 ],
                                                 If (locals.funct7 == 0x20) [ # sub
+                                                                locals.matched <= 1,
                                                                 sub(regs[locals.rs1], regs[locals.rs2]).inline(),
                                                                 regs[locals.rd] <= sub.result
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x4) [ # xor
+                                                locals.matched <= 1,
                                                 b_xor(regs[locals.rs1], regs[locals.rs2]).inline(),
                                                 regs[locals.rd] <= b_xor.result
                                 ],
                                 If (locals.funct3 == 0x6) [ # or
+                                                locals.matched <= 1,
                                                 b_or(regs[locals.rs1], regs[locals.rs2]).inline(),
                                                 regs[locals.rd] <= b_or.result
                                 ],
                                 If (locals.funct3 == 0x7) [ # and
+                                                locals.matched <= 1,
                                                 b_and(regs[locals.rs1], regs[locals.rs2]).inline(),
                                                 regs[locals.rd] <= b_and.result
                                 ],
                                 If (locals.funct3 == 0x1) [ # sll
+                                                locals.matched <= 1,
                                                 b_shift_left(regs[locals.rs1], regs[locals.rs2]).inline(),
                                                 regs[locals.rd] <= b_shift_left.result
                                 ],
                                 If (locals.funct3 == 0x5) [
                                                 If (locals.funct7 == 0x0) [ # srl
+                                                                locals.matched <= 1,
                                                                 b_shift_right(regs[locals.rs1], regs[locals.rs2]).inline(),
                                                                 regs[locals.rd] <= b_shift_right.result
                                                 ],
                                                 If (locals.funct7 == 0x20) [ # sra
+                                                                locals.matched <= 1,
                                                                 b_shift_right_arith(regs[locals.rs1], regs[locals.rs2]).inline(),
                                                                 regs[locals.rd] <= b_shift_right_arith.result
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x2) [ # slt
+                                                locals.matched <= 1,
                                                 less_than_signed(regs[locals.rs1], regs[locals.rs2]).inline(),
                                                 regs[locals.rd] <= less_than_signed.result
                                 ],
                                 If (locals.funct3 == 0x3) [ # sltu
+                                                locals.matched <= 1,
                                                 less_than_unsigned(regs[locals.rs1], regs[locals.rs2]).inline(),
                                                 regs[locals.rd] <= less_than_unsigned.result
                                 ]
@@ -397,41 +409,50 @@ def execute (locals, inst): return [
                 If (locals.opcode == 0b0010011) [
                                 decode_i_type(inst).inline(),
                                 If (locals.funct3 == 0x0) [ # addi
+                                                locals.matched <= 1,
                                                 add(regs[locals.rs1], locals.imm).inline(),
                                                 regs[locals.rd] <= add.result
                                 ],
                                 If (locals.funct3 == 0x4) [ # xori
+                                                locals.matched <= 1,
                                                 b_xor(regs[locals.rs1], locals.imm).inline(),
                                                 regs[locals.rd] <= b_xor.result
                                 ],
                                 If (locals.funct3 == 0x6) [ # ori
+                                                locals.matched <= 1,
                                                 b_or(regs[locals.rs1], locals.imm).inline(),
                                                 regs[locals.rd] <= b_or.result
                                 ],
                                 If (locals.funct3 == 0x7) [ # andi
+                                                locals.matched <= 1,
                                                 b_and(regs[locals.rs1], locals.imm).inline(),
                                                 regs[locals.rd] <= b_and.result
                                 ],
                                 If (locals.funct3 == 0x1) [ # slli
+                                                locals.matched <= 1,
                                                 b_shift_left(regs[locals.rs1], locals.imm).inline(),
                                                 regs[locals.rd] <= b_shift_left.result
                                 ],
                                 If (locals.funct3 == 0x5) [
                                                 locals.funct7 <= inst >> 25,
                                                 If (locals.funct7 == 0x0) [ # srli
+                                                                locals.matched <= 1,
                                                                 b_shift_right(regs[locals.rs1], locals.imm).inline(),
                                                                 regs[locals.rd] <= b_shift_right.result
                                                 ],
                                                 If (locals.funct7 == 0x20) [ # srai
+                                                                locals.matched <= 1,
                                                                 b_shift_right_arith(regs[locals.rs1], locals.imm & 0x1f).inline(),
                                                                 regs[locals.rd] <= b_shift_right_arith.result
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x2) [ # slti
+                                                locals.matched <= 1,
                                                 less_than_signed(regs[locals.rs1], locals.imm).inline(),
                                                 regs[locals.rd] <= less_than_signed.result
                                 ],
                                 If (locals.funct3 == 0x3) [ # sltiu
+                                                locals.matched <= 1,
                                                 less_than_unsigned(regs[locals.rs1], locals.imm).inline(),
                                                 regs[locals.rd] <= less_than_unsigned.result
                                 ]
@@ -441,26 +462,31 @@ def execute (locals, inst): return [
                                 add(regs[locals.rs1], locals.imm).inline(),
                                 locals.addr <= add.result,
                                 If (locals.funct3 == 0x0) [ # lb
+                                                locals.matched <= 1,
                                                 bus_load8(locals.addr).inline(),
                                                 toSigned8(bus_result).inline(),
                                                 toUnsigned32(toSigned8.result).inline(),
                                                 regs[locals.rd] <= toUnsigned32.result
                                 ],
                                 If (locals.funct3 == 0x1) [ # lh
+                                                locals.matched <= 1,
                                                 bus_load16(locals.addr).inline(),
                                                 toSigned16(bus_result).inline(),
                                                 toUnsigned32(toSigned16.result).inline(),
                                                 regs[locals.rd] <= toUnsigned32.result
                                 ],
                                 If (locals.funct3 == 0x2) [ # lw
+                                                locals.matched <= 1,
                                                 bus_load32(locals.addr).inline(),
                                                 regs[locals.rd] <= bus_result
                                 ],
                                 If (locals.funct3 == 0x4) [ # lbu
+                                                locals.matched <= 1,
                                                 bus_load8(locals.addr).inline(),
                                                 regs[locals.rd] <= bus_result
                                 ],
                                 If (locals.funct3 == 0x5) [ # lhu
+                                                locals.matched <= 1,
                                                 bus_load16(locals.addr).inline(),
                                                 regs[locals.rd] <= bus_result
                                 ]
@@ -470,77 +496,96 @@ def execute (locals, inst): return [
                                 add(regs[locals.rs1], locals.imm).inline(),
                                 locals.addr <= add.result,
                                 If (locals.funct3 == 0x0) [ # sb
+                                                locals.matched <= 1,
                                                 bus_store8(locals.addr, regs[locals.rs2] & 0xff).inline()
                                 ],
                                 If (locals.funct3 == 0x1) [ # sh
+                                                locals.matched <= 1,
                                                 bus_store16(locals.addr, regs[locals.rs2] & 0xffff).inline()
                                 ],
                                 If (locals.funct3 == 0x2) [ # sw
+                                                locals.matched <= 1,
                                                 bus_store32(locals.addr, regs[locals.rs2]).inline()
                                 ]
                 ],
                 If (locals.opcode == 0b1100011) [
                                 decode_b_type(inst).inline(),
                                 If (locals.funct3 == 0x0) [ # beq
+                                                locals.matched <= 1,
                                                 If (regs[locals.rs1] == regs[locals.rs2]) [
-                                                                pc <= pc + locals.imm
+                                                                pc <= pc - 4 + locals.imm
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x1) [ # bne
+                                                locals.matched <= 1,
                                                 If (regs[locals.rs1] != regs[locals.rs2]) [
-                                                                pc <= pc + locals.imm
+                                                                pc <= pc - 4 + locals.imm
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x6) [ # bltu
+                                                locals.matched <= 1,
                                                 If (regs[locals.rs1] < regs[locals.rs2]) [
-                                                                pc <= pc + locals.imm
+                                                                pc <= pc - 4 + locals.imm
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x7) [ # bgeu
+                                                locals.matched <= 1,
                                                 If ((regs[locals.rs1] < regs[locals.rs2]).NOT()) [
-                                                                pc <= pc + locals.imm
+                                                                pc <= pc - 4 + locals.imm
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x4) [ # blt
+                                                locals.matched <= 1,
                                                 toSigned32(regs[locals.rs1]).inline(),
                                                 locals.srs1 <= toSigned32.result,
                                                 toSigned32(regs[locals.rs2]).inline(),
                                                 If (locals.srs1 < toSigned32.result) [
-                                                                pc <= pc + locals.imm
+                                                                pc <= pc - 4 + locals.imm
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x5) [ # bge
+                                                locals.matched <= 1,
                                                 toSigned32(regs[locals.rs1]).inline(),
                                                 locals.srs1 <= toSigned32.result,
                                                 toSigned32(regs[locals.rs2]).inline(),
                                                 If ((locals.srs1 < toSigned32.result).NOT()) [
-                                                                pc <= pc + locals.imm
+                                                                pc <= pc - 4 + locals.imm
                                                 ]
                                 ]
                 ],
                 If (locals.opcode == 0b1101111) [ # jal
+                                locals.matched <= 1,
                                 decode_j_type(inst).inline(),
-                                regs[locals.rd] <= pc + 4,
+                                regs[locals.rd] <= pc,
                                 pc <= pc - 4 + locals.imm
                 ],
                 If (locals.opcode == 0b1100111) [ # jalr
+                                locals.matched <= 1,
                                 decode_i_type(inst).inline(),
-                                regs[locals.rd] <= pc + 4,
+                                regs[locals.rd] <= pc,
                                 pc <= regs[locals.rs1] + locals.imm
                 ],
                 If (locals.opcode == 0b0110111) [ # lui
+                                locals.matched <= 1,
                                 decode_u_type(inst).inline(),
                                 regs[locals.rd] <= locals.imm
                 ],
                 If (locals.opcode == 0b0010111) [ # auipc
+                                locals.matched <= 1,
                                 decode_u_type(inst).inline(),
-                                regs[locals.rd] <= locals.imm + pc
+                                regs[locals.rd] <= locals.imm + pc - 4
+                ],
+                If (locals.opcode == 0b0001111) [ # fence
+                                locals.matched <= 1,
+                ],
+                If (locals.matched == 0) [
+                                StopAll()
                 ]
 ]
 
 @emu.proc_def()
 def tick (locals): return [
-                If (pc - DRAM_BASE > DRAM_SIZE) [
+                If ((pc - DRAM_BASE > DRAM_SIZE).OR(pc == 0)) [
                              StopAll()   
                 ],
                 regs[0] <= 0,
