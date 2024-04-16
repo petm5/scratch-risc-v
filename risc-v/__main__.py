@@ -4,7 +4,7 @@ project = Project()
 
 emu = project.new_sprite("RISCV32")
 
-DRAM_SIZE = 200000
+DRAM_SIZE = 800000
 DRAM_BASE = 0x80000000
 
 dram = emu.new_list("_DRAM", [0] * DRAM_SIZE)
@@ -393,18 +393,18 @@ def execute (locals, inst): return [
                                 ],
                                 If (locals.funct3 == 0x1) [ # sll
                                                 locals.matched <= 1,
-                                                b_shift_left(regs[locals.rs1], regs[locals.rs2]).inline(),
+                                                b_shift_left(regs[locals.rs1], regs[locals.rs2] & 0x1f).inline(),
                                                 regs[locals.rd] <= b_shift_left.result
                                 ],
                                 If (locals.funct3 == 0x5) [
                                                 If (locals.funct7 == 0x0) [ # srl
                                                                 locals.matched <= 1,
-                                                                b_shift_right(regs[locals.rs1], regs[locals.rs2]).inline(),
+                                                                b_shift_right(regs[locals.rs1], regs[locals.rs2] & 0x1f).inline(),
                                                                 regs[locals.rd] <= b_shift_right.result
                                                 ],
                                                 If (locals.funct7 == 0x20) [ # sra
                                                                 locals.matched <= 1,
-                                                                b_shift_right_arith(regs[locals.rs1], regs[locals.rs2]).inline(),
+                                                                b_shift_right_arith(regs[locals.rs1], regs[locals.rs2] & 0x1f).inline(),
                                                                 regs[locals.rd] <= b_shift_right_arith.result
                                                 ]
                                 ],
@@ -456,7 +456,7 @@ def execute (locals, inst): return [
                                                                 b_shift_right(regs[locals.rs1], locals.imm).inline(),
                                                                 regs[locals.rd] <= b_shift_right.result
                                                 ],
-                                                If (locals.funct7 == 0x20) [ # srai
+                                                If (locals.funct7 == 0b0100000) [ # srai
                                                                 locals.matched <= 1,
                                                                 b_shift_right_arith(regs[locals.rs1], locals.imm & 0x1f).inline(),
                                                                 regs[locals.rd] <= b_shift_right_arith.result
@@ -529,25 +529,29 @@ def execute (locals, inst): return [
                                 If (locals.funct3 == 0x0) [ # beq
                                                 locals.matched <= 1,
                                                 If (regs[locals.rs1] == regs[locals.rs2]) [
-                                                                pc <= pc - 4 + locals.imm
+                                                                add(pc - 4, locals.imm).inline(),
+                                                                pc <= add.result
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x1) [ # bne
                                                 locals.matched <= 1,
                                                 If (regs[locals.rs1] != regs[locals.rs2]) [
-                                                                pc <= pc - 4 + locals.imm
+                                                                add(pc - 4, locals.imm).inline(),
+                                                                pc <= add.result
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x6) [ # bltu
                                                 locals.matched <= 1,
                                                 If (regs[locals.rs1] < regs[locals.rs2]) [
-                                                                pc <= pc - 4 + locals.imm
+                                                                add(pc - 4, locals.imm).inline(),
+                                                                pc <= add.result
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x7) [ # bgeu
                                                 locals.matched <= 1,
                                                 If ((regs[locals.rs1] < regs[locals.rs2]).NOT()) [
-                                                                pc <= pc - 4 + locals.imm
+                                                                add(pc - 4, locals.imm).inline(),
+                                                                pc <= add.result
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x4) [ # blt
@@ -556,7 +560,8 @@ def execute (locals, inst): return [
                                                 locals.srs1 <= toSigned32.result,
                                                 toSigned32(regs[locals.rs2]).inline(),
                                                 If (locals.srs1 < toSigned32.result) [
-                                                                pc <= pc - 4 + locals.imm
+                                                                add(pc - 4, locals.imm).inline(),
+                                                                pc <= add.result
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x5) [ # bge
@@ -565,15 +570,17 @@ def execute (locals, inst): return [
                                                 locals.srs1 <= toSigned32.result,
                                                 toSigned32(regs[locals.rs2]).inline(),
                                                 If ((locals.srs1 < toSigned32.result).NOT()) [
-                                                                pc <= pc - 4 + locals.imm
+                                                                add(pc - 4, locals.imm).inline(),
+                                                                pc <= add.result
                                                 ]
                                 ]
                 ],
                 If (locals.opcode == 0b1101111) [ # jal
                                 locals.matched <= 1,
                                 decode_j_type(inst).inline(),
+                                add(pc - 4, locals.imm).inline(),
                                 regs[locals.rd] <= pc,
-                                pc <= (pc - 4 + locals.imm) & 0xffffffff
+                                pc <= add.result
                 ],
                 If (locals.opcode == 0b1100111) [ # jalr
                                 locals.matched <= 1,
@@ -590,7 +597,8 @@ def execute (locals, inst): return [
                 If (locals.opcode == 0b0010111) [ # auipc
                                 locals.matched <= 1,
                                 decode_u_type(inst).inline(),
-                                regs[locals.rd] <= locals.imm + pc - 4
+                                add(pc - 4, locals.imm).inline(),
+                                regs[locals.rd] <= add.result
                 ],
                 If (locals.opcode == 0b0001111) [ # fence
                                 locals.matched <= 1,
