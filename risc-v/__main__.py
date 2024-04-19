@@ -15,7 +15,7 @@ ticks = emu.new_var("_TICKS")
 
 code = emu.new_list("_CODE", monitor=[240, 145, 120, 20])
 
-uart = emu.new_list("_UART", monitor=[0, 0, 480-2, 140])
+uart = emu.new_list("_UART")
 
 and_lut_contents = []
 for a in range(256):
@@ -242,6 +242,26 @@ def mem_store8 (locals, index, value): return [
 
 @emu.proc_def()
 def hw_store8 (locals, addr, value): return [
+                If (addr == 0x10002000) [
+                                locals.x <= value
+                ],
+                If (addr == 0x10002001) [
+                                SetXYPos(locals.x * 1.88 - 240, value * 1.4 - 180)
+                ],
+                If (addr == 0x10002002) [
+                                SetPenParam("color", value),
+                                PenDown()
+                ],
+                If (addr == 0x10002003) [
+                                If (value == 0) [
+                                                PenUp()
+                                ].Else [
+                                                SetPenParam("size", value)
+                                ]
+                ],
+                If (addr == 0x10002004) [
+                                EraseAll()
+                ],
                 If (addr == 0x10000000) [
                                 If (value == 10) [
                                                 uart.append("")
