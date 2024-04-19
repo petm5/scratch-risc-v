@@ -9,8 +9,10 @@ emu = project.new_sprite("RISCV32")
 DRAM_SIZE = 200000
 DRAM_BASE = 0x80000000
 
+CODE_MAX = 100000
+
 dram = emu.new_list("_DRAM", [0] * DRAM_SIZE)
-jit = emu.new_list("_JIT_CACHE", [0] * 4 * DRAM_SIZE)
+jit = emu.new_list("_JIT_CACHE", [0] * 4 * CODE_MAX)
 regs = emu.new_list("_REGS", [0] * 32)
 csrs = emu.new_list("_CSRS", [0] * 4096)
 pc = emu.new_var("_PC")
