@@ -2,16 +2,20 @@ from boiga import *
 
 project = Project()
 
+empty = project.new_sprite("empty")
+
 emu = project.new_sprite("RISCV32")
 
 DRAM_SIZE = 800000
 DRAM_BASE = 0x80000000
 
 dram = emu.new_list("_DRAM", [0] * DRAM_SIZE)
+jit = emu.new_list("_JIT_CACHE", [0] * 4 * DRAM_SIZE)
 regs = emu.new_list("_REGS", [0] * 32)
 csrs = emu.new_list("_CSRS", [0] * 4096)
 pc = emu.new_var("_PC")
 ticks = emu.new_var("_TICKS")
+jit_index = emu.new_var("_JIT_INDEX")
 
 code = emu.new_list("_CODE", monitor=[240, 145, 120, 20])
 
@@ -47,6 +51,9 @@ def reset (locals): return [
                 uart.append(""),
                 locals.i[:DRAM_SIZE:1] >> [
                                 dram[locals.i] <= 0
+                ],
+                locals.i[:DRAM_SIZE*4:1] >> [
+                                jit[locals.i] <= 0
                 ],
                 locals.i[:code.len():1] >> [
                                 dram[locals.i+0x0] <= code[locals.i]
@@ -304,400 +311,495 @@ def bus_store8 (locals, addr, value): return [
 
 @emu.proc_def(inline_only=True)
 def fetch (locals, pc): return [
-                mem_load32(pc - DRAM_BASE).inline()
+                locals.index <= pc - DRAM_BASE,
+                mem_load32(locals.index).inline()
 ]
 
 ### Decoders
 
 @emu.proc_def(inline_only=True)
 def decode_r_type (locals, inst): return [
-                execute.rd <= (inst >> 7) & 0x1f,
-                execute.rs1 <= (inst >> 15) & 0x1f,
-                execute.rs2 <= (inst >> 20) & 0x1f,
-                execute.funct3 <= (inst >> 12) & 0x7,
-                execute.funct7 <= inst >> 25
+                jit[jit_index+1] <= (inst >> 7) & 0x1f, # rd
+                jit[jit_index+2] <= (inst >> 15) & 0x1f, # rs1
+                jit[jit_index+3] <= (inst >> 20) & 0x1f, # rs2
+                locals.funct3 <= (inst >> 12) & 0x7,
+                locals.funct7 <= inst >> 25
 ]
 
 @emu.proc_def(inline_only=True)
 def decode_i_type (locals, inst): return [
-                execute.rd <= (inst >> 7) & 0x1f,
-                execute.rs1 <= (inst >> 15) & 0x1f,
-                execute.funct3 <= (inst >> 12) & 0x7
+                jit[jit_index+1] <= (inst >> 7) & 0x1f, # rd
+                jit[jit_index+2] <= (inst >> 15) & 0x1f, # rs1
+                locals.funct3 <= (inst >> 12) & 0x7
 ]
 
 @emu.proc_def(inline_only=True)
 def decode_i_type_signed (locals, inst): return [
                 toSigned32(inst).inline(),
-                execute.imm <= toSigned32.result >> 20
+                jit[jit_index+3] <= toSigned32.result >> 20 # imm
+]
+
+@emu.proc_def(inline_only=True)
+def decode_i_type_signed_shift (locals, inst): return [
+                toSigned32(inst).inline(),
+                jit[jit_index+3] <= (toSigned32.result >> 20) & 0x1f, # imm
+                locals.funct7 <= inst >> 25,
 ]
 
 @emu.proc_def(inline_only=True)
 def decode_i_type_unsigned (locals, inst): return [
                 toSigned32(inst).inline(),
                 toUnsigned32(toSigned32.result >> 20).inline(),
-                execute.imm <= toUnsigned32.result
+                jit[jit_index+3] <= toUnsigned32.result # imm
 ]
 
 @emu.proc_def(inline_only=True)
 def decode_i_type_csr (locals, inst): return [
-                execute.rd <= (inst >> 7) & 0x1f,
-                execute.rs1 <= (inst >> 15) & 0x1f,
-                execute.funct3 <= (inst >> 12) & 0x7,
-                execute.imm <= inst >> 20
+                jit[jit_index+1] <= (inst >> 7) & 0x1f, # rd
+                jit[jit_index+2] <= (inst >> 15) & 0x1f, # rs1
+                locals.funct3 <= (inst >> 12) & 0x7,
+                jit[jit_index+3] <= inst >> 20 # imm
 ]
 
 @emu.proc_def(inline_only=True)
 def decode_s_type (locals, inst): return [
-                execute.rs1 <= (inst >> 15) & 0x1f,
-                execute.rs2 <= (inst >> 20) & 0x1f,
-                execute.funct3 <= (inst >> 12) & 0x7,
+                jit[jit_index+1] <= (inst >> 15) & 0x1f, # rs1
+                jit[jit_index+2] <= (inst >> 20) & 0x1f, # rs2
+                locals.funct3 <= (inst >> 12) & 0x7,
                 toSigned32(inst).inline(),
                 toUnsigned32(toSigned32.result >> 25).inline(),
-                execute.imm <= (toUnsigned32.result << 5) + ((inst >> 7) & 0x1f)
+                jit[jit_index+3] <= (toUnsigned32.result << 5) + ((inst >> 7) & 0x1f) # imm
 ]
 
 @emu.proc_def(inline_only=True)
 def decode_b_type (locals, inst): return [
-                execute.rs1 <= (inst >> 15) & 0x1f,
-                execute.rs2 <= (inst >> 20) & 0x1f,
-                execute.funct3 <= (inst >> 12) & 0x7,
+                jit[jit_index+1] <= (inst >> 15) & 0x1f, # rs1
+                jit[jit_index+2] <= (inst >> 20) & 0x1f, # rs2
+                locals.funct3 <= (inst >> 12) & 0x7,
                 toSigned32(inst).inline(),
-                execute.imm <= ((toSigned32.result >> 31) << 12) + (((inst >> 7) & 0x01) << 11) + (((inst >> 25) & 0x3f) << 5) + (((inst >> 8) & 0x0f) << 1)
+                jit[jit_index+3] <= ((toSigned32.result >> 31) << 12) + (((inst >> 7) & 0x01) << 11) + (((inst >> 25) & 0x3f) << 5) + (((inst >> 8) & 0x0f) << 1) # imm
 ]
 
 @emu.proc_def(inline_only=True)
 def decode_u_type (locals, inst): return [
-                execute.rd <= (inst >> 7) & 0x1f,
-                execute.imm <= (inst >> 12) << 12
+                jit[jit_index+1] <= (inst >> 7) & 0x1f, # rd
+                jit[jit_index+3] <= (inst >> 12) << 12 # imm
 ]
 
 @emu.proc_def(inline_only=True)
 def decode_j_type (locals, inst): return [
-                execute.rd <= (inst >> 7) & 0x1f,
+                jit[jit_index+1] <= (inst >> 7) & 0x1f, # rd
                 toSigned32(inst).inline(),
-                execute.imm <= ((toSigned32.result >> 31) << 20) + (((inst >> 12) & 0xff) << 12) + (((inst >> 20) & 0x01) << 11) + (((inst >> 21) & 0x03ff) << 1)
+                jit[jit_index+3] <= ((toSigned32.result >> 31) << 20) + (((inst >> 12) & 0xff) << 12) + (((inst >> 20) & 0x01) << 11) + (((inst >> 21) & 0x03ff) << 1) # imm
 ]
 
-# cnt = emu.new_list("instruction count")
-# freq = emu.new_list("instruction frequency")
-
-# @emu.proc_def()
-# def freq (locals): return [
-#                 freq.delete_all(),
-#                 RepeatUntil (cnt.len() == 0) [
-#                                 locals.largest <= 0,
-#                                 locals.largest_i <= 0,
-#                                 locals.i[:cnt.len()/2:2] >> [
-#                                                If (cnt[locals.i+1] > locals.largest) [
-#                                                                locals.largest <= cnt[locals.i+1],
-#                                                                locals.largest_i <= locals.i
-#                                                ]
-#                                 ],
-#                                 freq.append(cnt[locals.largest_i]),
-#                                 cnt.delete_at(locals.largest_i),
-#                                 cnt.delete_at(locals.largest_i)
-#                 ]
-# ]
-
-@emu.proc_def(inline_only=True)
-def execute (locals, inst): return [
+@emu.proc_def()
+def jit_compile (locals, inst): return [
                 locals.opcode <= inst & 0x7f,
-                locals.matched <= 0,
-                # locals.i <= cnt.index(Literal("o").join(locals.opcode)),
-                # If (locals.i == -1) [
-                #                 cnt.append(Literal("o").join(locals.opcode)),
-                #                 cnt.append(1)
-                # ].Else [
-                #                 cnt[locals.i+1] <= cnt[locals.i+1] + 1
-                # ],
                 If (locals.opcode == 0b0010011) [
                                 decode_i_type(inst).inline(),
-                                If (locals.funct3 == 0x0) [ # addi
+                                If (decode_i_type.funct3 == 0x0) [ # addi
                                                 decode_i_type_signed(inst).inline(),
-                                                add(regs[locals.rs1], locals.imm).inline(),
-                                                regs[locals.rd] <= add.result,
+                                                jit[jit_index] <= 1,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x4) [ # xori
+                                If (decode_i_type.funct3 == 0x4) [ # xori
                                                 decode_i_type_unsigned(inst).inline(),
-                                                b_xor(regs[locals.rs1], locals.imm).inline(),
-                                                regs[locals.rd] <= b_xor.result,
+                                                jit[jit_index] <= 2,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x6) [ # ori
+                                If (decode_i_type.funct3 == 0x6) [ # ori
                                                 decode_i_type_unsigned(inst).inline(),
-                                                b_or(regs[locals.rs1], locals.imm).inline(),
-                                                regs[locals.rd] <= b_or.result,
+                                                jit[jit_index] <= 3,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x7) [ # andi
+                                If (decode_i_type.funct3 == 0x7) [ # andi
                                                 decode_i_type_unsigned(inst).inline(),
-                                                b_and(regs[locals.rs1], locals.imm).inline(),
-                                                regs[locals.rd] <= b_and.result,
+                                                jit[jit_index] <= 4,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x1) [ # slli
+                                If (decode_i_type.funct3 == 0x1) [ # slli
                                                 decode_i_type_signed(inst).inline(),
-                                                b_shift_left(regs[locals.rs1], locals.imm).inline(),
-                                                regs[locals.rd] <= b_shift_left.result,
+                                                jit[jit_index] <= 5,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x5) [
-                                                decode_i_type_signed(inst).inline(),
-                                                locals.funct7 <= inst >> 25,
-                                                If (locals.funct7 == 0x0) [ # srli
-                                                                b_shift_right(regs[locals.rs1], locals.imm).inline(),
-                                                                regs[locals.rd] <= b_shift_right.result,
+                                If (decode_i_type.funct3 == 0x5) [
+                                                decode_i_type_signed_shift(inst).inline(),
+                                                If (decode_i_type_signed_shift.funct7 == 0x0) [ # srli
+                                                                jit[jit_index] <= 6,
                                                                 StopThisScript()
                                                 ],
-                                                If (locals.funct7 == 0b0100000) [ # srai
-                                                                b_shift_right_arith(regs[locals.rs1], locals.imm & 0x1f).inline(),
-                                                                regs[locals.rd] <= b_shift_right_arith.result,
+                                                If (decode_i_type_signed_shift.funct7 == 0b0100000) [ # srai
+                                                                jit[jit_index] <= 7,
                                                                 StopThisScript()
                                                 ]
                                 ],
-                                If (locals.funct3 == 0x2) [ # slti
+                                If (decode_i_type.funct3 == 0x2) [ # slti
                                                 decode_i_type_signed(inst).inline(),
-                                                less_than_signed(regs[locals.rs1], locals.imm).inline(),
-                                                regs[locals.rd] <= less_than_signed.result,
+                                                jit[jit_index] <= 8,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x3) [ # sltiu
+                                If (decode_i_type.funct3 == 0x3) [ # sltiu
                                                 decode_i_type_signed(inst).inline(),
-                                                less_than_unsigned(regs[locals.rs1], locals.imm).inline(),
-                                                regs[locals.rd] <= less_than_unsigned.result,
+                                                jit[jit_index] <= 9,
                                                 StopThisScript()
                                 ]
                 ],
                 If (locals.opcode == 0b1100011) [
                                 decode_b_type(inst).inline(),
-                                If (locals.funct3 == 0x0) [ # beq
-                                                If (regs[locals.rs1] == regs[locals.rs2]) [
-                                                                add(pc - 4, locals.imm).inline(),
-                                                                pc <= add.result,
-                                                                StopThisScript()
-                                                ]
-                                ],
-                                If (locals.funct3 == 0x1) [ # bne
-                                                If (regs[locals.rs1] != regs[locals.rs2]) [
-                                                                add(pc - 4, locals.imm).inline(),
-                                                                pc <= add.result,
-                                                                StopThisScript()
-                                                ]
-                                ],
-                                If (locals.funct3 == 0x6) [ # bltu
-                                                If (regs[locals.rs1] < regs[locals.rs2]) [
-                                                                add(pc - 4, locals.imm).inline(),
-                                                                pc <= add.result,
-                                                                StopThisScript()
-                                                ]
-                                ],
-                                If (locals.funct3 == 0x7) [ # bgeu
-                                                If ((regs[locals.rs1] < regs[locals.rs2]).NOT()) [
-                                                                add(pc - 4, locals.imm).inline(),
-                                                                pc <= add.result,
-                                                                StopThisScript()
-                                                ]
-                                ],
-                                If (locals.funct3 == 0x4) [ # blt
-                                                toSigned32(regs[locals.rs1]).inline(),
-                                                locals.srs1 <= toSigned32.result,
-                                                toSigned32(regs[locals.rs2]).inline(),
-                                                If (locals.srs1 < toSigned32.result) [
-                                                                add(pc - 4, locals.imm).inline(),
-                                                                pc <= add.result
-                                                ],
+                                If (decode_b_type.funct3 == 0x0) [ # beq
+                                                jit[jit_index] <= 10,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x5) [ # bge
-                                                toSigned32(regs[locals.rs1]).inline(),
-                                                locals.srs1 <= toSigned32.result,
-                                                toSigned32(regs[locals.rs2]).inline(),
-                                                If ((locals.srs1 < toSigned32.result).NOT()) [
-                                                                add(pc - 4, locals.imm).inline(),
-                                                                pc <= add.result
-                                                ],
+                                If (decode_b_type.funct3 == 0x1) [ # bne
+                                                jit[jit_index] <= 11,
+                                                StopThisScript()
+                                ],
+                                If (decode_b_type.funct3 == 0x6) [ # bltu
+                                                jit[jit_index] <= 12,
+                                                StopThisScript()
+                                ],
+                                If (decode_b_type.funct3 == 0x7) [ # bgeu
+                                                jit[jit_index] <= 13,
+                                                StopThisScript()
+                                ],
+                                If (decode_b_type.funct3 == 0x4) [ # blt
+                                                jit[jit_index] <= 14,
+                                                StopThisScript()
+                                ],
+                                If (decode_b_type.funct3 == 0x5) [ # bge
+                                                jit[jit_index] <= 15,
                                                 StopThisScript()
                                 ]
                 ],
                 If (locals.opcode == 0b0110011) [
                                 decode_r_type(inst).inline(),
-                                If (locals.funct3 == 0x0) [
-                                                If (locals.funct7 == 0x0) [ # add
-                                                                add(regs[locals.rs1], regs[locals.rs2]).inline(),
-                                                                regs[locals.rd] <= add.result,
+                                If (decode_r_type.funct3 == 0x0) [
+                                                If (decode_r_type.funct7 == 0x0) [ # add
+                                                                jit[jit_index] <= 16,
                                                                 StopThisScript()
                                                 ],
-                                                If (locals.funct7 == 0x20) [ # sub
-                                                                sub(regs[locals.rs1], regs[locals.rs2]).inline(),
-                                                                regs[locals.rd] <= sub.result,
+                                                If (decode_r_type.funct7 == 0x20) [ # sub
+                                                                jit[jit_index] <= 17,
                                                                 StopThisScript()
                                                 ]
                                 ],
-                                If (locals.funct3 == 0x4) [ # xor
-                                                b_xor(regs[locals.rs1], regs[locals.rs2]).inline(),
-                                                regs[locals.rd] <= b_xor.result,
+                                If (decode_r_type.funct3 == 0x4) [ # xor
+                                                jit[jit_index] <= 18,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x6) [ # or
-                                                b_or(regs[locals.rs1], regs[locals.rs2]).inline(),
-                                                regs[locals.rd] <= b_or.result,
+                                If (decode_r_type.funct3 == 0x6) [ # or
+                                                jit[jit_index] <= 19,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x7) [ # and
-                                                b_and(regs[locals.rs1], regs[locals.rs2]).inline(),
-                                                regs[locals.rd] <= b_and.result,
+                                If (decode_r_type.funct3 == 0x7) [ # and
+                                                jit[jit_index] <= 20,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x1) [ # sll
-                                                b_shift_left(regs[locals.rs1], regs[locals.rs2] & 0x1f).inline(),
-                                                regs[locals.rd] <= b_shift_left.result,
+                                If (decode_r_type.funct3 == 0x1) [ # sll
+                                                jit[jit_index] <= 21,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x5) [
-                                                If (locals.funct7 == 0x0) [ # srl
-                                                                b_shift_right(regs[locals.rs1], regs[locals.rs2] & 0x1f).inline(),
-                                                                regs[locals.rd] <= b_shift_right.result,
+                                If (decode_r_type.funct3 == 0x5) [
+                                                If (decode_r_type.funct7 == 0x0) [ # srl
+                                                                jit[jit_index] <= 22,
                                                                 StopThisScript()
                                                 ],
-                                                If (locals.funct7 == 0x20) [ # sra
-                                                                b_shift_right_arith(regs[locals.rs1], regs[locals.rs2] & 0x1f).inline(),
-                                                                regs[locals.rd] <= b_shift_right_arith.result,
+                                                If (decode_r_type.funct7 == 0x20) [ # sra
+                                                                jit[jit_index] <= 23,
                                                                 StopThisScript()
                                                 ]
                                 ],
-                                If (locals.funct3 == 0x2) [ # slt
-                                                less_than_signed(regs[locals.rs1], regs[locals.rs2]).inline(),
-                                                regs[locals.rd] <= less_than_signed.result,
+                                If (decode_r_type.funct3 == 0x2) [ # slt
+                                                jit[jit_index] <= 24,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x3) [ # sltu
-                                                less_than_unsigned(regs[locals.rs1], regs[locals.rs2]).inline(),
-                                                regs[locals.rd] <= less_than_unsigned.result,
+                                If (decode_r_type.funct3 == 0x3) [ # sltu
+                                                jit[jit_index] <= 25,
                                                 StopThisScript()
                                 ]
                 ],
                 If (locals.opcode == 0b0000011) [
                                 decode_i_type(inst).inline(),
                                 decode_i_type_signed(inst).inline(),
-                                add(regs[locals.rs1], locals.imm).inline(),
-                                locals.addr <= add.result,
-                                If (locals.funct3 == 0x0) [ # lb
-                                                bus_load8(locals.addr).inline(),
-                                                toSigned8(bus_result).inline(),
-                                                toUnsigned32(toSigned8.result).inline(),
-                                                regs[locals.rd] <= toUnsigned32.result,
+                                If (decode_i_type.funct3 == 0x0) [ # lb
+                                                jit[jit_index] <= 26,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x1) [ # lh
-                                                bus_load16(locals.addr).inline(),
-                                                toSigned16(bus_result).inline(),
-                                                toUnsigned32(toSigned16.result).inline(),
-                                                regs[locals.rd] <= toUnsigned32.result,
+                                If (decode_i_type.funct3 == 0x1) [ # lh
+                                                jit[jit_index] <= 27,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x2) [ # lw
-                                                bus_load32(locals.addr).inline(),
-                                                regs[locals.rd] <= bus_result,
+                                If (decode_i_type.funct3 == 0x2) [ # lw
+                                                jit[jit_index] <= 28,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x4) [ # lbu
-                                                bus_load8(locals.addr).inline(),
-                                                regs[locals.rd] <= bus_result,
+                                If (decode_i_type.funct3 == 0x4) [ # lbu
+                                                jit[jit_index] <= 29,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x5) [ # lhu
-                                                bus_load16(locals.addr).inline(),
-                                                regs[locals.rd] <= bus_result,
+                                If (decode_i_type.funct3 == 0x5) [ # lhu
+                                                jit[jit_index] <= 30,
                                                 StopThisScript()
                                 ]
                 ],
                 If (locals.opcode == 0b0100011) [
                                 decode_s_type(inst).inline(),
-                                add(regs[locals.rs1], locals.imm).inline(),
-                                locals.addr <= add.result,
-                                If (locals.funct3 == 0x0) [ # sb
-                                                bus_store8(locals.addr, regs[locals.rs2] & 0xff).inline(),
+                                If (decode_s_type.funct3 == 0x0) [ # sb
+                                                jit[jit_index] <= 31,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x1) [ # sh
-                                                bus_store16(locals.addr, regs[locals.rs2] & 0xffff).inline(),
+                                If (decode_s_type.funct3 == 0x1) [ # sh
+                                                jit[jit_index] <= 32,
                                                 StopThisScript()
                                 ],
-                                If (locals.funct3 == 0x2) [ # sw
-                                                bus_store32(locals.addr, regs[locals.rs2]).inline(),
+                                If (decode_s_type.funct3 == 0x2) [ # sw
+                                                jit[jit_index] <= 33,
                                                 StopThisScript()
                                 ]
                 ],
                 If (locals.opcode == 0b1101111) [ # jal
                                 decode_j_type(inst).inline(),
-                                add(pc - 4, locals.imm).inline(),
-                                regs[locals.rd] <= pc,
-                                pc <= add.result,
+                                jit[jit_index] <= 34,
                                 StopThisScript()
                 ],
                 If (locals.opcode == 0b1100111) [ # jalr
                                 decode_i_type(inst).inline(),
                                 decode_i_type_signed(inst).inline(),
-                                add(regs[locals.rs1], locals.imm).inline(),
-                                regs[locals.rd] <= pc,
-                                pc <= (add.result >> 1) << 1,
+                                jit[jit_index] <= 35,
                                 StopThisScript()
                 ],
                 If (locals.opcode == 0b0110111) [ # lui
                                 decode_u_type(inst).inline(),
-                                regs[locals.rd] <= locals.imm,
+                                jit[jit_index] <= 36,
                                 StopThisScript()
                 ],
                 If (locals.opcode == 0b0010111) [ # auipc
                                 decode_u_type(inst).inline(),
-                                add(pc - 4, locals.imm).inline(),
-                                regs[locals.rd] <= add.result,
+                                jit[jit_index] <= 37,
                                 StopThisScript()
                 ],
-                If (locals.opcode == 0b0001111) [ # fence
+                If (locals.opcode == 0b0001111) [ # fence = nop
+                                jit[jit_index] <= 38,
                                 StopThisScript()
                 ],
-                If (locals.opcode == 0b1110011) [ # system
-                                decode_i_type_csr(inst).inline(),
-                                If (locals.funct3 == 0b001) [ # csrrw
-                                                locals.csr_tmp <= csrs[locals.imm],
-                                                csrs[locals.imm] <= regs[locals.rs1],
-                                                regs[locals.rd] <= locals.csr_tmp,
-                                                StopThisScript()
-                                ],
-                                If (locals.funct3 == 0b010) [ # csrrs
-                                                b_or(csrs[locals.imm], regs[locals.rs1]).inline(),
-                                                regs[locals.rd] <= csrs[locals.imm],
-                                                csrs[locals.imm] <= b_or.result,
-                                                StopThisScript()
-                                ],
-                                If (locals.funct3 == 0b011) [ # csrrc
-                                                b_and(csrs[locals.imm], regs[locals.rs1]).inline(),
-                                                regs[locals.rd] <= csrs[locals.imm],
-                                                csrs[locals.imm] <= b_and.result,
-                                                StopThisScript()
-                                ],
-                                If (locals.funct3 == 0b101) [ # csrrwi
-                                                locals.csr_tmp <= csrs[locals.imm],
-                                                csrs[locals.imm] <= locals.rs1,
-                                                regs[locals.rd] <= locals.csr_tmp,
-                                                StopThisScript()
-                                ],
-                                If (locals.funct3 == 0b110) [ # csrrsi
-                                                b_or(csrs[locals.imm], locals.rs1).inline(),
-                                                regs[locals.rd] <= csrs[locals.imm],
-                                                csrs[locals.imm] <= b_or.result,
-                                                StopThisScript()
-                                ],
-                                If (locals.funct3 == 0b111) [ # csrrci
-                                                b_and(csrs[locals.imm], locals.rs1).inline(),
-                                                regs[locals.rd] <= csrs[locals.imm],
-                                                csrs[locals.imm] <= b_and.result,
-                                                StopThisScript()
-                                ],
+                If (locals.opcode == 0b1110011) [ # system = nop
+                                jit[jit_index] <= 38,
+                                StopThisScript()
                 ],
-                locals.matched <= 0
+                jit[jit_index] <= 38
+]
+
+@emu.proc_def(inline_only=True)
+def execute (locals, index): return [
+                locals.inst <= jit[index],
+                If (locals.inst == 1) [ # addi
+                                add(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= add.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 2) [ # xori
+                                b_xor(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= b_xor.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 3) [ # ori
+                                b_or(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= b_or.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 4) [ # andi
+                                b_and(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= b_and.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 5) [ # slli
+                                b_shift_left(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= b_shift_left.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 6) [ # srli
+                                b_shift_right(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= b_shift_right.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 7) [ # srai
+                                b_shift_right_arith(regs[jit[index+2]], jit[index+3] & 0x1f).inline(),
+                                regs[jit[index+1]] <= b_shift_right_arith.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 8) [ # slti
+                                less_than_signed(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= less_than_signed.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 9) [ # sltiu
+                                less_than_unsigned(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= less_than_unsigned.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 10) [ # beq
+                                If (regs[jit[index+1]] == regs[jit[index+2]]) [
+                                                add(pc - 4, jit[index+3]).inline(),
+                                                pc <= add.result,
+                                ],
+                                StopThisScript()
+                ],
+                If (locals.inst == 11) [ # bne
+                                If (regs[jit[index+1]] != regs[jit[index+2]]) [
+                                                add(pc - 4, jit[index+3]).inline(),
+                                                pc <= add.result
+                                ],
+                                StopThisScript()
+                ],
+                If (locals.inst == 12) [ # bltu
+                                If (regs[jit[index+1]] < regs[jit[index+2]]) [
+                                                add(pc - 4, jit[index+3]).inline(),
+                                                pc <= add.result
+                                ],
+                                StopThisScript()
+                ],
+                If (locals.inst == 13) [ # bgeu
+                                If ((regs[jit[index+1]] < regs[jit[index+2]]).NOT()) [
+                                                add(pc - 4, jit[index+3]).inline(),
+                                                pc <= add.result
+                                ],
+                                StopThisScript()
+                ],
+                If (locals.inst == 14) [ # blt
+                                toSigned32(regs[jit[index+1]]).inline(),
+                                locals.srs1 <= toSigned32.result,
+                                toSigned32(regs[jit[index+2]]).inline(),
+                                If (locals.srs1 < toSigned32.result) [
+                                                add(pc - 4, jit[index+3]).inline(),
+                                                pc <= add.result
+                                ],
+                                StopThisScript()
+                ],
+                If (locals.inst == 15) [ # bge
+                                toSigned32(regs[jit[index+1]]).inline(),
+                                locals.srs1 <= toSigned32.result,
+                                toSigned32(regs[jit[index+2]]).inline(),
+                                If ((locals.srs1 < toSigned32.result).NOT()) [
+                                                add(pc - 4, jit[index+3]).inline(),
+                                                pc <= add.result
+                                ],
+                                StopThisScript()
+                ],
+                If (locals.inst == 16) [ # add
+                                add(regs[jit[index+2]], regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= add.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 17) [ # sub
+                                sub(regs[jit[index+2]], regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= sub.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 18) [ # xor
+                                b_xor(regs[jit[index+2]], regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= b_xor.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 19) [ # or
+                                b_or(regs[jit[index+2]], regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= b_or.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 20) [ # and
+                                b_and(regs[jit[index+2]], regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= b_and.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 21) [ # sll
+                                b_shift_left(regs[jit[index+2]], regs[jit[index+3]] & 0x1f).inline(),
+                                regs[jit[index+1]] <= b_shift_left.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 22) [ # srl
+                                b_shift_right(regs[jit[index+2]], regs[jit[index+3]] & 0x1f).inline(),
+                                regs[jit[index+1]] <= b_shift_right.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 23) [ # sra
+                                b_shift_right_arith(regs[jit[index+2]], regs[jit[index+3]] & 0x1f).inline(),
+                                regs[jit[index+1]] <= b_shift_right_arith.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 24) [ # slt
+                                less_than_signed(regs[jit[index+2]], regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= less_than_signed.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 25) [ # sltu
+                                less_than_unsigned(regs[jit[index+2]], regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= less_than_unsigned.result,
+                                StopThisScript()
+                ],
+                add(regs[jit[index+2]], jit[index+3]).inline(),
+                If (locals.inst == 26) [ # lb
+                                bus_load8(add.result).inline(),
+                                toSigned8(bus_result).inline(),
+                                toUnsigned32(toSigned8.result).inline(),
+                                regs[jit[index+1]] <= toUnsigned32.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 27) [ # lh
+                                bus_load16(add.result).inline(),
+                                toSigned16(bus_result).inline(),
+                                toUnsigned32(toSigned16.result).inline(),
+                                regs[jit[index+1]] <= toUnsigned32.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 28) [ # lw
+                                bus_load32(add.result).inline(),
+                                regs[jit[index+1]] <= bus_result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 29) [ # lbu
+                                bus_load8(add.result).inline(),
+                                regs[jit[index+1]] <= bus_result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 30) [ # lhu
+                                bus_load16(add.result).inline(),
+                                regs[jit[index+1]] <= bus_result,
+                                StopThisScript()
+                ],
+                add(regs[jit[index+1]], jit[index+3]).inline(),
+                If (locals.inst == 31) [ # sb
+                                bus_store8(add.result, regs[jit[index+2]] & 0xff).inline(),
+                                StopThisScript()
+                ],
+                If (locals.inst == 32) [ # sh
+                                bus_store16(add.result, regs[jit[index+2]] & 0xffff).inline(),
+                                StopThisScript()
+                ],
+                If (locals.inst == 33) [ # sw
+                                bus_store32(add.result, regs[jit[index+2]]).inline(),
+                                StopThisScript()
+                ],
+                If (locals.inst == 34) [ # jal
+                                add(pc - 4, jit[index+3]).inline(),
+                                regs[jit[index+1]] <= pc,
+                                pc <= add.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 35) [ # jalr
+                                add(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= pc,
+                                pc <= (add.result >> 1) << 1,
+                                StopThisScript()
+                ],
+                If (locals.inst == 36) [ # lui
+                                regs[jit[index+1]] <= jit[index+3],
+                                StopThisScript()
+                ],
+                If (locals.inst == 37) [ # auipc
+                                add(pc - 4, jit[index+3]).inline(),
+                                regs[jit[index+1]] <= add.result,
+                                StopThisScript()
+                ]
 ]
 
 @emu.proc_def()
@@ -748,10 +850,14 @@ def tick (locals): return [
                                 breakpoint()   
                 ],
                 regs[0] <= 0,
+                jit_index <= (pc - DRAM_BASE) * 4,
+                # If (jit[jit_index] == 0) [
                 fetch(pc).inline(),
+                jit_compile(bus_result),
+                # ],
                 breakpoint.old_pc <= pc,
                 pc <= pc + 4,
-                execute(bus_result).inline()
+                execute(jit_index).inline()
 ]
 
 @emu.proc_def()
