@@ -322,7 +322,11 @@ def decode_r_type (locals, inst): return [
 def decode_i_type (locals, inst): return [
                 execute.rd <= (inst >> 7) & 0x1f,
                 execute.rs1 <= (inst >> 15) & 0x1f,
-                execute.funct3 <= (inst >> 12) & 0x7,
+                execute.funct3 <= (inst >> 12) & 0x7
+]
+
+@emu.proc_def(inline_only=True)
+def decode_i_type_signed (locals, inst): return [
                 toSigned32(inst).inline(),
                 execute.imm <= toSigned32.result >> 20
 ]
@@ -409,6 +413,7 @@ def execute (locals, inst): return [
                 If (locals.opcode == 0b0010011) [
                                 decode_i_type(inst).inline(),
                                 If (locals.funct3 == 0x0) [ # addi
+                                                decode_i_type_signed(inst).inline(),
                                                 add(regs[locals.rs1], locals.imm).inline(),
                                                 regs[locals.rd] <= add.result,
                                                 StopThisScript()
@@ -432,11 +437,13 @@ def execute (locals, inst): return [
                                                 StopThisScript()
                                 ],
                                 If (locals.funct3 == 0x1) [ # slli
+                                                decode_i_type_signed(inst).inline(),
                                                 b_shift_left(regs[locals.rs1], locals.imm).inline(),
                                                 regs[locals.rd] <= b_shift_left.result,
                                                 StopThisScript()
                                 ],
                                 If (locals.funct3 == 0x5) [
+                                                decode_i_type_signed(inst).inline(),
                                                 locals.funct7 <= inst >> 25,
                                                 If (locals.funct7 == 0x0) [ # srli
                                                                 b_shift_right(regs[locals.rs1], locals.imm).inline(),
@@ -450,11 +457,13 @@ def execute (locals, inst): return [
                                                 ]
                                 ],
                                 If (locals.funct3 == 0x2) [ # slti
+                                                decode_i_type_signed(inst).inline(),
                                                 less_than_signed(regs[locals.rs1], locals.imm).inline(),
                                                 regs[locals.rd] <= less_than_signed.result,
                                                 StopThisScript()
                                 ],
                                 If (locals.funct3 == 0x3) [ # sltiu
+                                                decode_i_type_signed(inst).inline(),
                                                 less_than_unsigned(regs[locals.rs1], locals.imm).inline(),
                                                 regs[locals.rd] <= less_than_unsigned.result,
                                                 StopThisScript()
@@ -570,6 +579,7 @@ def execute (locals, inst): return [
                 ],
                 If (locals.opcode == 0b0000011) [
                                 decode_i_type(inst).inline(),
+                                decode_i_type_signed(inst).inline(),
                                 add(regs[locals.rs1], locals.imm).inline(),
                                 locals.addr <= add.result,
                                 If (locals.funct3 == 0x0) [ # lb
@@ -628,6 +638,7 @@ def execute (locals, inst): return [
                 ],
                 If (locals.opcode == 0b1100111) [ # jalr
                                 decode_i_type(inst).inline(),
+                                decode_i_type_signed(inst).inline(),
                                 add(regs[locals.rs1], locals.imm).inline(),
                                 regs[locals.rd] <= pc,
                                 pc <= (add.result >> 1) << 1,
