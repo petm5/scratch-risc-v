@@ -6,7 +6,7 @@ empty = project.new_sprite("empty")
 
 emu = project.new_sprite("RISCV32")
 
-DRAM_SIZE = 800000
+DRAM_SIZE = 200000
 DRAM_BASE = 0x80000000
 
 dram = emu.new_list("_DRAM", [0] * DRAM_SIZE)
@@ -240,7 +240,8 @@ def bus_load8 (locals, addr): return [
 
 @emu.proc_def(inline_only=True)
 def mem_store8 (locals, index, value): return [
-                dram[index] <= value
+                dram[index] <= value,
+                jit[index*4] <= 0
 ]
 
 @emu.proc_def()
@@ -590,9 +591,55 @@ def jit_compile (locals, inst): return [
                 jit[jit_index] <= 38
 ]
 
+# freq = emu.new_list("_frequency", [0] * 37)
+
 @emu.proc_def(inline_only=True)
 def execute (locals, index): return [
                 locals.inst <= jit[index],
+                # freq[locals.inst] <= freq[locals.inst] + 1,
+                If (locals.inst == 6) [ # srli
+                                b_shift_right(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= b_shift_right.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 7) [ # srai
+                                b_shift_right_arith(regs[jit[index+2]], jit[index+3] & 0x1f).inline(),
+                                regs[jit[index+1]] <= b_shift_right_arith.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 8) [ # slti
+                                less_than_signed(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= less_than_signed.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 12) [ # bltu
+                                If (regs[jit[index+1]] < regs[jit[index+2]]) [
+                                                add(pc - 4, jit[index+3]).inline(),
+                                                pc <= add.result
+                                ],
+                                StopThisScript()
+                ],
+                If (locals.inst == 34) [ # jal
+                                add(pc - 4, jit[index+3]).inline(),
+                                regs[jit[index+1]] <= pc,
+                                pc <= add.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 35) [ # jalr
+                                add(regs[jit[index+2]], jit[index+3]).inline(),
+                                regs[jit[index+1]] <= pc,
+                                pc <= (add.result >> 1) << 1,
+                                StopThisScript()
+                ],
+                If (locals.inst == 36) [ # lui
+                                regs[jit[index+1]] <= jit[index+3],
+                                StopThisScript()
+                ],
+                If (locals.inst == 37) [ # auipc
+                                add(pc - 4, jit[index+3]).inline(),
+                                regs[jit[index+1]] <= add.result,
+                                StopThisScript()
+                ],
                 If (locals.inst == 1) [ # addi
                                 add(regs[jit[index+2]], jit[index+3]).inline(),
                                 regs[jit[index+1]] <= add.result,
@@ -618,21 +665,6 @@ def execute (locals, index): return [
                                 regs[jit[index+1]] <= b_shift_left.result,
                                 StopThisScript()
                 ],
-                If (locals.inst == 6) [ # srli
-                                b_shift_right(regs[jit[index+2]], jit[index+3]).inline(),
-                                regs[jit[index+1]] <= b_shift_right.result,
-                                StopThisScript()
-                ],
-                If (locals.inst == 7) [ # srai
-                                b_shift_right_arith(regs[jit[index+2]], jit[index+3] & 0x1f).inline(),
-                                regs[jit[index+1]] <= b_shift_right_arith.result,
-                                StopThisScript()
-                ],
-                If (locals.inst == 8) [ # slti
-                                less_than_signed(regs[jit[index+2]], jit[index+3]).inline(),
-                                regs[jit[index+1]] <= less_than_signed.result,
-                                StopThisScript()
-                ],
                 If (locals.inst == 9) [ # sltiu
                                 less_than_unsigned(regs[jit[index+2]], jit[index+3]).inline(),
                                 regs[jit[index+1]] <= less_than_unsigned.result,
@@ -647,13 +679,6 @@ def execute (locals, index): return [
                 ],
                 If (locals.inst == 11) [ # bne
                                 If (regs[jit[index+1]] != regs[jit[index+2]]) [
-                                                add(pc - 4, jit[index+3]).inline(),
-                                                pc <= add.result
-                                ],
-                                StopThisScript()
-                ],
-                If (locals.inst == 12) [ # bltu
-                                If (regs[jit[index+1]] < regs[jit[index+2]]) [
                                                 add(pc - 4, jit[index+3]).inline(),
                                                 pc <= add.result
                                 ],
@@ -778,27 +803,6 @@ def execute (locals, index): return [
                 If (locals.inst == 33) [ # sw
                                 bus_store32(add.result, regs[jit[index+2]]).inline(),
                                 StopThisScript()
-                ],
-                If (locals.inst == 34) [ # jal
-                                add(pc - 4, jit[index+3]).inline(),
-                                regs[jit[index+1]] <= pc,
-                                pc <= add.result,
-                                StopThisScript()
-                ],
-                If (locals.inst == 35) [ # jalr
-                                add(regs[jit[index+2]], jit[index+3]).inline(),
-                                regs[jit[index+1]] <= pc,
-                                pc <= (add.result >> 1) << 1,
-                                StopThisScript()
-                ],
-                If (locals.inst == 36) [ # lui
-                                regs[jit[index+1]] <= jit[index+3],
-                                StopThisScript()
-                ],
-                If (locals.inst == 37) [ # auipc
-                                add(pc - 4, jit[index+3]).inline(),
-                                regs[jit[index+1]] <= add.result,
-                                StopThisScript()
                 ]
 ]
 
@@ -851,10 +855,10 @@ def tick (locals): return [
                 ],
                 regs[0] <= 0,
                 jit_index <= (pc - DRAM_BASE) * 4,
-                # If (jit[jit_index] == 0) [
-                fetch(pc).inline(),
-                jit_compile(bus_result),
-                # ],
+                If (jit[jit_index] == 0) [
+                                fetch(pc).inline(),
+                                jit_compile(bus_result),
+                ],
                 breakpoint.old_pc <= pc,
                 pc <= pc + 4,
                 execute(jit_index).inline()
