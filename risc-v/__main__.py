@@ -1,4 +1,5 @@
 from boiga import *
+from math import floor, ceil
 
 project = Project()
 
@@ -54,7 +55,7 @@ def reset (locals): return [
                 locals.i[:DRAM_SIZE:1] >> [
                                 dram[locals.i] <= 0
                 ],
-                locals.i[:DRAM_SIZE*4:1] >> [
+                locals.i[:CODE_MAX*4:1] >> [
                                 jit[locals.i] <= 0
                 ],
                 locals.i[:code.len():1] >> [
@@ -112,6 +113,30 @@ def add (locals, a, b): return [
 @emu.proc_def(inline_only=True)
 def sub (locals, a, b): return [
                 toUnsigned32((a - b) & 0xffffffff).inline(),
+                locals.result <= toUnsigned32.result
+]
+
+@emu.proc_def()
+def multiply (locals, a, b): return [
+                toUnsigned32(a * b).inline(),
+                locals.result <= toUnsigned32.result & 0xffffffff
+]
+
+@emu.proc_def()
+def multiply_upper (locals, a, b): return [
+                toUnsigned32((a * b) >> 32).inline(),
+                locals.result <= toUnsigned32.result # 16-bit
+]
+
+@emu.proc_def(inline_only=True)
+def divide (locals, a, b): return [
+                toUnsigned32(floor(a / b)).inline(),
+                locals.result <= toUnsigned32.result
+]
+
+@emu.proc_def(inline_only=True)
+def remainder (locals, a, b): return [
+                toUnsigned32((a % b)).inline(),
                 locals.result <= toUnsigned32.result
 ]
 
@@ -255,7 +280,7 @@ def hw_store8 (locals, addr, value): return [
                                 SetXYPos(locals.x * 1.88 - 240, value * 1.4 - 180)
                 ],
                 If (addr == 0x10002002) [
-                                SetPenParam("color", value),
+                                SetPenParam("color", value / 256 * 100),
                                 PenDown()
                 ],
                 If (addr == 0x10002003) [
@@ -477,49 +502,83 @@ def jit_compile (locals, inst): return [
                 ],
                 If (locals.opcode == 0b0110011) [
                                 decode_r_type(inst).inline(),
-                                If (decode_r_type.funct3 == 0x0) [
-                                                If (decode_r_type.funct7 == 0x0) [ # add
+                                If (decode_r_type.funct7 == 0b0) [
+                                                If (decode_r_type.funct3 == 0x0) [ # add
                                                                 jit[jit_index] <= 16,
                                                                 StopThisScript()
                                                 ],
-                                                If (decode_r_type.funct7 == 0x20) [ # sub
-                                                                jit[jit_index] <= 17,
+                                                If (decode_r_type.funct3 == 0x4) [ # xor
+                                                                jit[jit_index] <= 18,
                                                                 StopThisScript()
-                                                ]
-                                ],
-                                If (decode_r_type.funct3 == 0x4) [ # xor
-                                                jit[jit_index] <= 18,
-                                                StopThisScript()
-                                ],
-                                If (decode_r_type.funct3 == 0x6) [ # or
-                                                jit[jit_index] <= 19,
-                                                StopThisScript()
-                                ],
-                                If (decode_r_type.funct3 == 0x7) [ # and
-                                                jit[jit_index] <= 20,
-                                                StopThisScript()
-                                ],
-                                If (decode_r_type.funct3 == 0x1) [ # sll
-                                                jit[jit_index] <= 21,
-                                                StopThisScript()
-                                ],
-                                If (decode_r_type.funct3 == 0x5) [
-                                                If (decode_r_type.funct7 == 0x0) [ # srl
+                                                ],
+                                                If (decode_r_type.funct3 == 0x6) [ # or
+                                                                jit[jit_index] <= 19,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x7) [ # and
+                                                                jit[jit_index] <= 20,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x1) [ # sll
+                                                                jit[jit_index] <= 21,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x5) [ # srl
                                                                 jit[jit_index] <= 22,
                                                                 StopThisScript()
                                                 ],
-                                                If (decode_r_type.funct7 == 0x20) [ # sra
+                                                If (decode_r_type.funct3 == 0x2) [ # slt
+                                                                jit[jit_index] <= 24,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x3) [ # sltu
+                                                                jit[jit_index] <= 25,
+                                                                StopThisScript()
+                                                ]
+                                ],
+                                If (decode_r_type.funct7 == 0x20) [
+                                                If (decode_r_type.funct3 == 0x0) [ # sub
+                                                                jit[jit_index] <= 17,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x5) [ # sra
                                                                 jit[jit_index] <= 23,
                                                                 StopThisScript()
                                                 ]
                                 ],
-                                If (decode_r_type.funct3 == 0x2) [ # slt
-                                                jit[jit_index] <= 24,
-                                                StopThisScript()
-                                ],
-                                If (decode_r_type.funct3 == 0x3) [ # sltu
-                                                jit[jit_index] <= 25,
-                                                StopThisScript()
+                                If (decode_r_type.funct7 == 0x1) [
+                                                If (decode_r_type.funct3 == 0x0) [ # mul
+                                                                jit[jit_index] <= 40,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x1) [ # mulh
+                                                                jit[jit_index] <= 41,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x2) [ # mulhu
+                                                                jit[jit_index] <= 42,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x3) [ # mulhsu
+                                                                jit[jit_index] <= 43,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x4) [ # div
+                                                                jit[jit_index] <= 44,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x5) [ # divu
+                                                                jit[jit_index] <= 45,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x6) [ # rem
+                                                                jit[jit_index] <= 46,
+                                                                StopThisScript()
+                                                ],
+                                                If (decode_r_type.funct3 == 0x7) [ # remu
+                                                                jit[jit_index] <= 47,
+                                                                StopThisScript()
+                                                ]
                                 ]
                 ],
                 If (locals.opcode == 0b0000011) [
@@ -582,15 +641,15 @@ def jit_compile (locals, inst): return [
                                 jit[jit_index] <= 37,
                                 StopThisScript()
                 ],
-                If (locals.opcode == 0b0001111) [ # fence = nop
+                # If (locals.opcode == 0b0001111) [ # fence = nop
+                #                 jit[jit_index] <= 39,
+                #                 StopThisScript()
+                # ],
+                If (locals.opcode == 0b1110011) [ # system
                                 jit[jit_index] <= 38,
                                 StopThisScript()
                 ],
-                If (locals.opcode == 0b1110011) [ # system = nop
-                                jit[jit_index] <= 38,
-                                StopThisScript()
-                ],
-                jit[jit_index] <= 38
+                jit[jit_index] <= 39
 ]
 
 # freq = emu.new_list("_frequency", [0] * 37)
@@ -619,6 +678,55 @@ def execute (locals, index): return [
                                                 add(pc - 4, jit[index+3]).inline(),
                                                 pc <= add.result
                                 ],
+                                StopThisScript()
+                ],
+                If (locals.inst == 40) [ # mul
+                                multiply(regs[jit[index+2]], regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= multiply.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 41) [ # mulh
+                                toSigned32(regs[jit[index+2]]).inline(),
+                                locals.s1 <= toSigned32.result,
+                                toSigned32(regs[jit[index+3]]).inline(),
+                                multiply_upper(locals.s1, toSigned32.result).inline(),
+                                regs[jit[index+1]] <= multiply_upper.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 42) [ # mulhu
+                                multiply_upper(regs[jit[index+2]], regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= multiply_upper.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 43) [ # mulhisu
+                                toSigned32(regs[jit[index+2]]).inline(),
+                                multiply_upper(toSigned32.result, regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= multiply_upper.result
+                ],
+                If (locals.inst == 44) [ # div
+                                toSigned32(regs[jit[index+2]]).inline(),
+                                locals.s1 <= toSigned32.result,
+                                toSigned32(regs[jit[index+3]]).inline(),
+                                divide(locals.s1, toSigned32.result).inline(),
+                                regs[jit[index+1]] <= divide.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 45) [ # divu
+                                divide(regs[jit[index+2]], regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= divide.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 46) [ # rem
+                                toSigned32(regs[jit[index+2]]).inline(),
+                                locals.s1 <= toSigned32.result,
+                                toSigned32(regs[jit[index+3]]).inline(),
+                                remainder(locals.s1, toSigned32.result).inline(),
+                                regs[jit[index+1]] <= remainder.result,
+                                StopThisScript()
+                ],
+                If (locals.inst == 47) [ # remu
+                                remainder(regs[jit[index+2]], regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= remainder.result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 34) [ # jal
@@ -799,12 +907,17 @@ def execute (locals, index): return [
                                 StopThisScript()
                 ],
                 If (locals.inst == 32) [ # sh
-                                bus_store16(add.result, regs[jit[index+2]] & 0xffff).inline(),
+                                locals.value <= regs[jit[index+2]] & 0xffff,
+                                bus_store16(add.result, locals.value).inline(),
                                 StopThisScript()
                 ],
                 If (locals.inst == 33) [ # sw
-                                bus_store32(add.result, regs[jit[index+2]]).inline(),
+                                locals.value <= regs[jit[index+2]],
+                                bus_store32(add.result, locals.value).inline(),
                                 StopThisScript()
+                ],
+                If (locals.inst == 38) [
+                                locals.running <= 0
                 ]
 ]
 
@@ -868,8 +981,12 @@ def tick (locals): return [
 
 @emu.proc_def()
 def loop (locals): return [
+                execute.running <= 1,
                 Repeat (300000) [
-                tick()
+                                tick(),
+                                If (execute.running == 0) [
+                                                StopThisScript()
+                                ]
                 ]
 ]
 
