@@ -45,6 +45,12 @@ for a in range(256):
 
 xor_lut = emu.new_list("_XOR_LUT", xor_lut_contents)
 
+base2_lut_contents = []
+for a in range(2 ** 5):
+                base2_lut_contents.append(2 ** a)
+
+base2_lut = emu.new_list("_BASE2_LUT", base2_lut_contents)
+
 ascii_lut = emu.new_var("_ASCII", ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz')
 hex_lut = emu.new_var("_HEXA", '0123456789abcdef')
 
@@ -69,80 +75,83 @@ def reset (locals): return [
                 ticks <= 0
 ]
 
+result = emu.new_var("_RESULT")
+
 ### Functions for sign extension
 
 @emu.proc_def(inline_only=True)
 def toSigned32 (locals, int): return [
                 If (int > 2147483647) [
-                                locals.result <= -4294967296 + int
+                                result <= -4294967296 + int
                 ].Else [
-                                locals.result <= int
+                                result <= int
                 ]
 ]
 
 @emu.proc_def(inline_only=True)
 def toSigned16 (locals, int): return [
                 If (int > 32767) [
-                                locals.result <= -65536 + int
+                                result <= -65536 + int
                 ].Else [
-                                locals.result <= int
+                                result <= int
                 ]
 ]
 
 @emu.proc_def(inline_only=True)
 def toSigned8 (locals, int): return [
                 If (int > 127) [
-                                locals.result <= -256 + int
+                                result <= -256 + int
                 ].Else [
-                                locals.result <= int
+                                result <= int
                 ]
 ]
 
-@emu.proc_def(inline_only=True)
+@emu.proc_def()
 def toUnsigned32 (locals, int): return [
-                locals.result <= ((int + 2147483648) % 4294967296) - 2147483648
+                If (int < 0) [
+                                result <= 4294967296 + int
+                ].Else [
+                                result <= int
+                ]
+                # result <= ((int + 2147483648) % 4294967296) - 2147483648 # Doesn't work?
 ]
 
 ### ALU operations
 
 @emu.proc_def(inline_only=True)
 def add (locals, a, b): return [
-                locals.result <= (a + b) & 0xffffffff
+                result <= (a + b) & 0xffffffff
 ]
 
 @emu.proc_def(inline_only=True)
 def sub (locals, a, b): return [
-                toUnsigned32((a - b) & 0xffffffff).inline(),
-                locals.result <= toUnsigned32.result
+                result <= (a - b) & 0xffffffff
 ]
 
-@emu.proc_def()
+@emu.proc_def(inline_only=True)
 def multiply (locals, a, b): return [
                 toUnsigned32(a * b).inline(),
-                locals.result <= toUnsigned32.result & 0xffffffff
+                result <= result & 0xffffffff
 ]
 
-@emu.proc_def()
+@emu.proc_def(inline_only=True)
 def multiply_upper (locals, a, b): return [
-                toUnsigned32((a * b) >> 32).inline(),
-                locals.result <= toUnsigned32.result # 16-bit
+                toUnsigned32((a * b) >> 32).inline()
 ]
 
 @emu.proc_def(inline_only=True)
 def divide (locals, a, b): return [
-                toUnsigned32(floor(a / b)).inline(),
-                locals.result <= toUnsigned32.result
+                toUnsigned32(floor(a / b)).inline()
 ]
 
 @emu.proc_def(inline_only=True)
 def remainder (locals, a, b): return [
-                toUnsigned32((a % b)).inline(),
-                locals.result <= toUnsigned32.result
+                toUnsigned32((a % b)).inline()
 ]
 
 @emu.proc_def(inline_only=True)
 def b_xor (locals, a, b): return [
-                locals.result <= xor_lut[(a & 0xff) + ((b & 0xff) * 256)] # 0:7
+                result <= xor_lut[(a & 0xff) + ((b & 0xff) * 256)] # 0:7
                                 + (xor_lut[((a >> 8) & 0xff) + (((b >> 8) & 0xff) * 256)] << 8) # 8:15
                                 + (xor_lut[((a >> 16) & 0xff) + (((b >> 16) & 0xff) * 256)] << 16) # 16:23
                                 + (xor_lut[((a >> 24) & 0xff) + (((b >> 24) & 0xff) * 256)] << 24) # 24:31
@@ -150,7 +159,7 @@ def b_xor (locals, a, b): return [
 
 @emu.proc_def(inline_only=True)
 def b_or (locals, a, b): return [
-                locals.result <= or_lut[(a & 0xff) + ((b & 0xff) * 256)] # 0:7
+                result <= or_lut[(a & 0xff) + ((b & 0xff) * 256)] # 0:7
                                 + (or_lut[((a >> 8) & 0xff) + (((b >> 8) & 0xff) * 256)] << 8) # 8:15
                                 + (or_lut[((a >> 16) & 0xff) + (((b >> 16) & 0xff) * 256)] << 16) # 16:23
                                 + (or_lut[((a >> 24) & 0xff) + (((b >> 24) & 0xff) * 256)] << 24) # 24:31
@@ -158,7 +167,7 @@ def b_or (locals, a, b): return [
 
 @emu.proc_def(inline_only=True)
 def b_and (locals, a, b): return [
-                locals.result <= and_lut[(a & 0xff) + ((b & 0xff) * 256)] # 0:7
+                result <= and_lut[(a & 0xff) + ((b & 0xff) * 256)] # 0:7
                                 + (and_lut[((a >> 8) & 0xff) + (((b >> 8) & 0xff) * 256)] << 8) # 8:15
                                 + (and_lut[((a >> 16) & 0xff) + (((b >> 16) & 0xff) * 256)] << 16) # 16:23
                                 + (and_lut[((a >> 24) & 0xff) + (((b >> 24) & 0xff) * 256)] << 24) # 24:31
@@ -166,39 +175,38 @@ def b_and (locals, a, b): return [
 
 @emu.proc_def(inline_only=True)
 def b_shift_left (locals, a, b): return [
-                locals.result <= (a << b) & 0xffffffff
+                result <= (a << b) & 0xffffffff
 ]
 
 @emu.proc_def(inline_only=True)
 def b_shift_right (locals, a, b): return [
-                locals.result <= a >> b
+                result <= floor(a / base2_lut[b])
 ]
 
 @emu.proc_def(inline_only=True)
 def b_shift_right_arith (locals, a, b): return [
                 toSigned32(a).inline(),
-                toUnsigned32(toSigned32.result >> b).inline(),
-                locals.result <= toUnsigned32.result
+                toUnsigned32(floor(result / base2_lut[b])).inline()
 ]
 
 @emu.proc_def(inline_only=True)
 def less_than_unsigned (locals, a, b): return [
                 If (a < b) [
-                                locals.result <= 1
+                                result <= 1
                 ].Else [
-                                locals.result <= 0
+                                result <= 0
                 ]
 ]
 
 @emu.proc_def(inline_only=True)
 def less_than_signed (locals, a, b): return [
                 toSigned32(a).inline(),
-                locals.signed <= toSigned32.result,
+                locals.signed <= result,
                 toSigned32(b).inline(),
-                If (locals.signed < toSigned32.result) [
-                                locals.result <= 1
+                If (locals.signed < result) [
+                                result <= 1
                 ].Else [
-                                locals.result <= 0
+                                result <= 0
                 ]
 ]
 
@@ -274,24 +282,29 @@ def mem_store8 (locals, index, value): return [
 @emu.proc_def()
 def hw_store8 (locals, addr, value): return [
                 If (addr == 0x10002000) [
-                                locals.x <= value
+                                locals.x <= value,
+                                StopThisScript()
                 ],
                 If (addr == 0x10002001) [
-                                SetXYPos(locals.x * 1.88 - 240, value * 1.4 - 180)
+                                SetXYPos(locals.x * 1.88 - 240, value * 1.4 - 180),
+                                StopThisScript()
                 ],
                 If (addr == 0x10002002) [
                                 SetPenParam("color", value / 256 * 100),
-                                PenDown()
+                                PenDown(),
+                                StopThisScript()
                 ],
                 If (addr == 0x10002003) [
                                 If (value == 0) [
                                                 PenUp()
                                 ].Else [
                                                 SetPenSize(value)
-                                ]
+                                ],
+                                StopThisScript()
                 ],
                 If (addr == 0x10002004) [
-                                EraseAll()
+                                EraseAll(),
+                                StopThisScript()
                 ],
                 If (addr == 0x10000000) [
                                 If (value == 10) [
@@ -331,7 +344,7 @@ def bus_store16 (locals, addr, value): return [
 @emu.proc_def(inline_only=True)
 def bus_store8 (locals, addr, value): return [
                 If (addr < DRAM_BASE) [
-                                hw_store8(addr, value & 0xff)
+                                hw_store8(addr, value & 0xff).inline()
                 ].Else [
                                 mem_store8(addr - DRAM_BASE, value & 0xff).inline()
                 ]
@@ -364,21 +377,21 @@ def decode_i_type (locals, inst): return [
 @emu.proc_def(inline_only=True)
 def decode_i_type_signed (locals, inst): return [
                 toSigned32(inst).inline(),
-                jit[jit_index+3] <= toSigned32.result >> 20 # imm
+                jit[jit_index+3] <= result >> 20 # imm
 ]
 
 @emu.proc_def(inline_only=True)
 def decode_i_type_signed_shift (locals, inst): return [
                 toSigned32(inst).inline(),
-                jit[jit_index+3] <= (toSigned32.result >> 20) & 0x1f, # imm
+                jit[jit_index+3] <= (result >> 20) & 0x1f, # imm
                 locals.funct7 <= inst >> 25,
 ]
 
 @emu.proc_def(inline_only=True)
 def decode_i_type_unsigned (locals, inst): return [
                 toSigned32(inst).inline(),
-                toUnsigned32(toSigned32.result >> 20).inline(),
-                jit[jit_index+3] <= toUnsigned32.result # imm
+                toUnsigned32(result >> 20).inline(),
+                jit[jit_index+3] <= result # imm
 ]
 
 @emu.proc_def(inline_only=True)
@@ -395,8 +408,8 @@ def decode_s_type (locals, inst): return [
                 jit[jit_index+2] <= (inst >> 20) & 0x1f, # rs2
                 locals.funct3 <= (inst >> 12) & 0x7,
                 toSigned32(inst).inline(),
-                toUnsigned32(toSigned32.result >> 25).inline(),
-                jit[jit_index+3] <= (toUnsigned32.result << 5) + ((inst >> 7) & 0x1f) # imm
+                toUnsigned32(result >> 25).inline(),
+                jit[jit_index+3] <= (result << 5) + ((inst >> 7) & 0x1f) # imm
 ]
 
 @emu.proc_def(inline_only=True)
@@ -405,7 +418,7 @@ def decode_b_type (locals, inst): return [
                 jit[jit_index+2] <= (inst >> 20) & 0x1f, # rs2
                 locals.funct3 <= (inst >> 12) & 0x7,
                 toSigned32(inst).inline(),
-                jit[jit_index+3] <= ((toSigned32.result >> 31) << 12) + (((inst >> 7) & 0x01) << 11) + (((inst >> 25) & 0x3f) << 5) + (((inst >> 8) & 0x0f) << 1) # imm
+                jit[jit_index+3] <= ((result >> 31) << 12) + (((inst >> 7) & 0x01) << 11) + (((inst >> 25) & 0x3f) << 5) + (((inst >> 8) & 0x0f) << 1) # imm
 ]
 
 @emu.proc_def(inline_only=True)
@@ -418,7 +431,7 @@ def decode_u_type (locals, inst): return [
 def decode_j_type (locals, inst): return [
                 jit[jit_index+1] <= (inst >> 7) & 0x1f, # rd
                 toSigned32(inst).inline(),
-                jit[jit_index+3] <= ((toSigned32.result >> 31) << 20) + (((inst >> 12) & 0xff) << 12) + (((inst >> 20) & 0x01) << 11) + (((inst >> 21) & 0x03ff) << 1) # imm
+                jit[jit_index+3] <= ((result >> 31) << 20) + (((inst >> 12) & 0xff) << 12) + (((inst >> 20) & 0x01) << 11) + (((inst >> 21) & 0x03ff) << 1) # imm
 ]
 
 @emu.proc_def()
@@ -468,7 +481,7 @@ def jit_compile (locals, inst): return [
                                                 StopThisScript()
                                 ],
                                 If (decode_i_type.funct3 == 0x3) [ # sltiu
-                                                decode_i_type_signed(inst).inline(),
+                                                decode_i_type_unsigned(inst).inline(),
                                                 jit[jit_index] <= 9,
                                                 StopThisScript()
                                 ]
@@ -660,85 +673,85 @@ def execute (locals, index): return [
                 # freq[locals.inst] <= freq[locals.inst] + 1,
                 If (locals.inst == 6) [ # srli
                                 b_shift_right(regs[jit[index+2]], jit[index+3]).inline(),
-                                regs[jit[index+1]] <= b_shift_right.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 7) [ # srai
                                 b_shift_right_arith(regs[jit[index+2]], jit[index+3] & 0x1f).inline(),
-                                regs[jit[index+1]] <= b_shift_right_arith.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 8) [ # slti
                                 less_than_signed(regs[jit[index+2]], jit[index+3]).inline(),
-                                regs[jit[index+1]] <= less_than_signed.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 12) [ # bltu
                                 If (regs[jit[index+1]] < regs[jit[index+2]]) [
                                                 add(pc - 4, jit[index+3]).inline(),
-                                                pc <= add.result
+                                                pc <= result
                                 ],
                                 StopThisScript()
                 ],
                 If (locals.inst == 40) [ # mul
                                 multiply(regs[jit[index+2]], regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= multiply.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 41) [ # mulh
                                 toSigned32(regs[jit[index+2]]).inline(),
-                                locals.s1 <= toSigned32.result,
+                                locals.s1 <= result,
                                 toSigned32(regs[jit[index+3]]).inline(),
-                                multiply_upper(locals.s1, toSigned32.result).inline(),
-                                regs[jit[index+1]] <= multiply_upper.result,
+                                multiply_upper(locals.s1, result).inline(),
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 42) [ # mulhu
                                 multiply_upper(regs[jit[index+2]], regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= multiply_upper.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 43) [ # mulhisu
                                 toSigned32(regs[jit[index+2]]).inline(),
-                                multiply_upper(toSigned32.result, regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= multiply_upper.result
+                                multiply_upper(result, regs[jit[index+3]]).inline(),
+                                regs[jit[index+1]] <= result
                 ],
                 If (locals.inst == 44) [ # div
                                 toSigned32(regs[jit[index+2]]).inline(),
-                                locals.s1 <= toSigned32.result,
+                                locals.s1 <= result,
                                 toSigned32(regs[jit[index+3]]).inline(),
-                                divide(locals.s1, toSigned32.result).inline(),
-                                regs[jit[index+1]] <= divide.result,
+                                divide(locals.s1, result).inline(),
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 45) [ # divu
                                 divide(regs[jit[index+2]], regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= divide.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 46) [ # rem
                                 toSigned32(regs[jit[index+2]]).inline(),
-                                locals.s1 <= toSigned32.result,
+                                locals.s1 <= result,
                                 toSigned32(regs[jit[index+3]]).inline(),
-                                remainder(locals.s1, toSigned32.result).inline(),
-                                regs[jit[index+1]] <= remainder.result,
+                                remainder(locals.s1, result).inline(),
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 47) [ # remu
                                 remainder(regs[jit[index+2]], regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= remainder.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 34) [ # jal
                                 add(pc - 4, jit[index+3]).inline(),
                                 regs[jit[index+1]] <= pc,
-                                pc <= add.result,
+                                pc <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 35) [ # jalr
                                 add(regs[jit[index+2]], jit[index+3]).inline(),
                                 regs[jit[index+1]] <= pc,
-                                pc <= (add.result >> 1) << 1,
+                                pc <= (result >> 1) << 1,
                                 StopThisScript()
                 ],
                 If (locals.inst == 36) [ # lui
@@ -747,173 +760,173 @@ def execute (locals, index): return [
                 ],
                 If (locals.inst == 37) [ # auipc
                                 add(pc - 4, jit[index+3]).inline(),
-                                regs[jit[index+1]] <= add.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 1) [ # addi
                                 add(regs[jit[index+2]], jit[index+3]).inline(),
-                                regs[jit[index+1]] <= add.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 2) [ # xori
                                 b_xor(regs[jit[index+2]], jit[index+3]).inline(),
-                                regs[jit[index+1]] <= b_xor.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 3) [ # ori
                                 b_or(regs[jit[index+2]], jit[index+3]).inline(),
-                                regs[jit[index+1]] <= b_or.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 4) [ # andi
                                 b_and(regs[jit[index+2]], jit[index+3]).inline(),
-                                regs[jit[index+1]] <= b_and.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 5) [ # slli
                                 b_shift_left(regs[jit[index+2]], jit[index+3]).inline(),
-                                regs[jit[index+1]] <= b_shift_left.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 9) [ # sltiu
                                 less_than_unsigned(regs[jit[index+2]], jit[index+3]).inline(),
-                                regs[jit[index+1]] <= less_than_unsigned.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 10) [ # beq
                                 If (regs[jit[index+1]] == regs[jit[index+2]]) [
                                                 add(pc - 4, jit[index+3]).inline(),
-                                                pc <= add.result,
+                                                pc <= result,
                                 ],
                                 StopThisScript()
                 ],
                 If (locals.inst == 11) [ # bne
                                 If (regs[jit[index+1]] != regs[jit[index+2]]) [
                                                 add(pc - 4, jit[index+3]).inline(),
-                                                pc <= add.result
+                                                pc <= result
                                 ],
                                 StopThisScript()
                 ],
                 If (locals.inst == 13) [ # bgeu
                                 If ((regs[jit[index+1]] < regs[jit[index+2]]).NOT()) [
                                                 add(pc - 4, jit[index+3]).inline(),
-                                                pc <= add.result
+                                                pc <= result
                                 ],
                                 StopThisScript()
                 ],
                 If (locals.inst == 14) [ # blt
                                 toSigned32(regs[jit[index+1]]).inline(),
-                                locals.srs1 <= toSigned32.result,
+                                locals.srs1 <= result,
                                 toSigned32(regs[jit[index+2]]).inline(),
-                                If (locals.srs1 < toSigned32.result) [
+                                If (locals.srs1 < result) [
                                                 add(pc - 4, jit[index+3]).inline(),
-                                                pc <= add.result
+                                                pc <= result
                                 ],
                                 StopThisScript()
                 ],
                 If (locals.inst == 15) [ # bge
                                 toSigned32(regs[jit[index+1]]).inline(),
-                                locals.srs1 <= toSigned32.result,
+                                locals.srs1 <= result,
                                 toSigned32(regs[jit[index+2]]).inline(),
-                                If ((locals.srs1 < toSigned32.result).NOT()) [
+                                If ((locals.srs1 < result).NOT()) [
                                                 add(pc - 4, jit[index+3]).inline(),
-                                                pc <= add.result
+                                                pc <= result
                                 ],
                                 StopThisScript()
                 ],
                 If (locals.inst == 16) [ # add
                                 add(regs[jit[index+2]], regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= add.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 17) [ # sub
                                 sub(regs[jit[index+2]], regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= sub.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 18) [ # xor
                                 b_xor(regs[jit[index+2]], regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= b_xor.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 19) [ # or
                                 b_or(regs[jit[index+2]], regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= b_or.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 20) [ # and
                                 b_and(regs[jit[index+2]], regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= b_and.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 21) [ # sll
                                 b_shift_left(regs[jit[index+2]], regs[jit[index+3]] & 0x1f).inline(),
-                                regs[jit[index+1]] <= b_shift_left.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 22) [ # srl
                                 b_shift_right(regs[jit[index+2]], regs[jit[index+3]] & 0x1f).inline(),
-                                regs[jit[index+1]] <= b_shift_right.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 23) [ # sra
                                 b_shift_right_arith(regs[jit[index+2]], regs[jit[index+3]] & 0x1f).inline(),
-                                regs[jit[index+1]] <= b_shift_right_arith.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 24) [ # slt
                                 less_than_signed(regs[jit[index+2]], regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= less_than_signed.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 25) [ # sltu
                                 less_than_unsigned(regs[jit[index+2]], regs[jit[index+3]]).inline(),
-                                regs[jit[index+1]] <= less_than_unsigned.result,
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 add(regs[jit[index+2]], jit[index+3]).inline(),
                 If (locals.inst == 26) [ # lb
-                                bus_load8(add.result).inline(),
+                                bus_load8(result).inline(),
                                 toSigned8(bus_result).inline(),
-                                toUnsigned32(toSigned8.result).inline(),
-                                regs[jit[index+1]] <= toUnsigned32.result,
+                                toUnsigned32(result).inline(),
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 27) [ # lh
-                                bus_load16(add.result).inline(),
+                                bus_load16(result).inline(),
                                 toSigned16(bus_result).inline(),
-                                toUnsigned32(toSigned16.result).inline(),
-                                regs[jit[index+1]] <= toUnsigned32.result,
+                                toUnsigned32(result).inline(),
+                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 28) [ # lw
-                                bus_load32(add.result).inline(),
+                                bus_load32(result).inline(),
                                 regs[jit[index+1]] <= bus_result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 29) [ # lbu
-                                bus_load8(add.result).inline(),
+                                bus_load8(result).inline(),
                                 regs[jit[index+1]] <= bus_result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 30) [ # lhu
-                                bus_load16(add.result).inline(),
+                                bus_load16(result).inline(),
                                 regs[jit[index+1]] <= bus_result,
                                 StopThisScript()
                 ],
                 add(regs[jit[index+1]], jit[index+3]).inline(),
                 If (locals.inst == 31) [ # sb
-                                bus_store8(add.result, regs[jit[index+2]] & 0xff).inline(),
+                                bus_store8(result, regs[jit[index+2]]).inline(),
                                 StopThisScript()
                 ],
                 If (locals.inst == 32) [ # sh
-                                locals.value <= regs[jit[index+2]] & 0xffff,
-                                bus_store16(add.result, locals.value).inline(),
+                                locals.value <= regs[jit[index+2]],
+                                bus_store16(result, locals.value).inline(),
                                 StopThisScript()
                 ],
                 If (locals.inst == 33) [ # sw
                                 locals.value <= regs[jit[index+2]],
-                                bus_store32(add.result, locals.value).inline(),
+                                bus_store32(result, locals.value).inline(),
                                 StopThisScript()
                 ],
                 If (locals.inst == 38) [
@@ -951,9 +964,14 @@ def breakpoint (locals): return [
                 uart.append(Literal("PC: ").join(to_hex.result)),
                 to_hex(locals.old_pc),
                 uart.append(Literal("Prev PC: ").join(to_hex.result)),
+                fetch(pc).inline(),
                 to_hex(bus_result),
-                uart.append(Literal("inst: ").join(to_hex.result)),
+                uart.append(Literal("bus: ").join(to_hex.result)),
                 uart.append(Literal("tick: ").join(ticks)),
+                uart.append(Literal("jit0: ").join(jit[jit_index])),
+                uart.append(Literal("jit1: ").join(jit[jit_index+1])),
+                uart.append(Literal("jit2: ").join(jit[jit_index+2])),
+                uart.append(Literal("jit3: ").join(jit[jit_index+3])),
                 uart.append("--- Registers ---"),
                 locals.i[:regs.len():1] >> [
                                 to_hex(regs[locals.i]),
@@ -982,7 +1000,7 @@ def tick (locals): return [
 @emu.proc_def()
 def loop (locals): return [
                 execute.running <= 1,
-                Repeat (300000) [
+                Forever [
                                 tick(),
                                 If (execute.running == 0) [
                                                 StopThisScript()
