@@ -174,6 +174,14 @@ def serialise_expression(sprite, expression, parent, shadow=False):
 	elif type(expression) is ast.MouseDown:
 		out = {"opcode": "sensing_mousedown"}
 	
+	elif type(expression) is ast.KeyPressed:
+		out = {
+			"opcode": "sensing_keypressed",
+			"inputs": {
+				"KEY_OPTION": sprite.serialise_arg(expression.key, uid),
+			},
+		}
+	
 	elif type(expression) is ast.MouseX:
 		out = {"opcode": "sensing_mousex"}
 	

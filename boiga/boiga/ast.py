@@ -156,6 +156,11 @@ class MouseDown(core.Expression):
 	def __init__(self):
 		pass
 
+class KeyPressed(core.Expression):
+	type = "bool"
+	def __init__(self, key=""):
+		self.key = ensure_expression(key)
+
 class Touching(core.Expression):
 	type = "bool"
 	def __init__(self, object):

@@ -22,7 +22,14 @@ jit_index = emu.new_var("_JIT_INDEX")
 
 code = emu.new_list("_CODE", monitor=[240, 145, 120, 20])
 
-uart = emu.new_list("_UART")
+uart = emu.new_list("_OUTPUT_BUF")
+input = emu.new_list("_INPUT_BUF")
+history = emu.new_list("_OUTPUT_HIST")
+newlines = emu.new_var("newlines")
+h_lines = emu.new_var("history_lines")
+
+x = emu.new_var("x")
+y = emu.new_var("y")
 
 and_lut_contents = []
 for a in range(256):
@@ -51,13 +58,34 @@ for a in range(2 ** 5):
 
 base2_lut = emu.new_list("_BASE2_LUT", base2_lut_contents)
 
-ascii_lut = emu.new_var("_ASCII", ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz')
+ascii = []
+for a in range(256):
+                ascii.append(chr(a))
+
+ascii_lut = emu.new_list("_ASCII", ascii)
+
 hex_lut = emu.new_var("_HEXA", '0123456789abcdef')
 
 @emu.proc_def()
-def reset (locals): return [
+def clear_screen (locals): return [
                 uart.delete_all(),
-                uart.append(""),
+                x <= 0,
+                y <= 0,
+                SetCostume("bg"),
+                SetXYPos(0, 0),
+                Show(),
+                Stamp(),
+                SetXYPos(-240, 180),
+                SetCostume("cursor")
+                
+]
+
+@emu.proc_def()
+def reset (locals): return [
+                clear_screen(),
+                newlines <= 0,
+                h_lines <= 0,
+                history.delete_all(),
                 locals.i[:DRAM_SIZE:1] >> [
                                 dram[locals.i] <= 0
                 ],
@@ -234,7 +262,21 @@ def mem_load8 (locals, index): return [
 ]
 
 @emu.proc_def()
-def hw_load8 (locals, addr): return []
+def hw_load8 (locals, addr): return [
+                If (addr == 0x10000000) [
+                                bus_result <= input[0],
+                                input.delete_at(0),
+                                StopThisScript()
+                ],
+                If (addr == 0x10000005) [
+                                If (input.len() > 0) [
+                                                bus_result <= 1
+                                ].Else [
+                                                bus_result <= 0
+                                ],
+                                StopThisScript()
+                ]
+]
 
 @emu.proc_def(inline_only=True)
 def bus_load32 (locals, addr): return [
@@ -279,6 +321,30 @@ def mem_store8 (locals, index, value): return [
                 jit[index*4] <= 0
 ]
 
+@emu.proc_def(inline_only=True)
+def prune_history (locals): return [
+                Repeat (h_lines-20) [
+                                RepeatUntil (history[0] == 10) [
+                                                history.delete_at(0)
+                                ],
+                                history.delete_at(0)
+                ],
+                h_lines <= 20
+]
+
+@emu.proc_def(inline_only=True)
+def console_write (locals, value): return [
+                uart.append(value),
+                history.append(value),
+                If (value == 10) [
+                                newlines.changeby(1),
+                                h_lines.changeby(1),
+                                If (h_lines > 20) [
+                                                prune_history().inline()
+                                ]
+                ]
+]
+
 @emu.proc_def()
 def hw_store8 (locals, addr, value): return [
                 If (addr == 0x10002000) [
@@ -307,11 +373,7 @@ def hw_store8 (locals, addr, value): return [
                                 StopThisScript()
                 ],
                 If (addr == 0x10000000) [
-                                If (value == 10) [
-                                                uart.append("")
-                                ].Else [
-                                                uart[uart.len()-1] <= uart[uart.len()-1].join(ascii_lut[value-32])
-                                ]
+                                console_write(value).inline()
                 ]
 ]
 
@@ -997,12 +1059,58 @@ def tick (locals): return [
                 execute(jit_index).inline()
 ]
 
+@emu.proc_def(inline_only=True)
+def draw_char (locals, code): return [
+                If (code == 10) [
+                                y.changeby(1),
+                                x <= 0,
+                                SetXYPos(-240, -y * 16 + 180)
+                ].Else [
+                                SetCostume(code + 2),
+                                Stamp(),
+                                x.changeby(1),
+                                SetXYPos(x * 8 - 240, -y * 16 + 180)
+                ]
+]
+
+@emu.proc_def(inline_only=True)
+def append (locals): return [
+                RepeatUntil (uart.len() == 0) [
+                                draw_char(uart[0]).inline(),
+                                uart.delete_at(0)
+                ],
+                SetCostume("cursor")
+]
+
+@emu.proc_def(inline_only=True)
+def redraw (locals): return [
+                clear_screen(),
+                locals.i[:history.len():1] >> [
+                                draw_char(history[locals.i]).inline()
+                ],
+                SetCostume("cursor")
+]
+
+@emu.proc_def()
+def draw (locals): return [
+                If (uart.len() > 0) [
+                                locals.scroll <= newlines - 20,
+                                If (locals.scroll > 0) [
+                                                redraw().inline(),
+                                                newlines <= 20
+                                ].Else [
+                                                append().inline()
+                                ]
+                ]
+]
+
 @emu.proc_def()
 def loop (locals): return [
                 execute.running <= 1,
                 Forever [
                                 tick(),
                                 If (execute.running == 0) [
+                                                draw(),
                                                 StopThisScript()
                                 ]
                 ]
@@ -1014,5 +1122,48 @@ emu.on_flag([
             loop()
             ]
 ])
+
+symbols = '!"#$%&\'()*+,-./0123456789:;<=>?@[\\]^_`{}'
+lowercase = 'abcdefghijklmnopqrstuvwxyz'
+
+for c in symbols:
+                emu.on_press(c, [
+                                input.append(ord(c))
+                ])
+
+for c in lowercase:
+                emu.on_press(c, [
+                                If (KeyPressed("shift")) [
+                                                input.append(ord(c.upper()))
+                                ].Else [
+                                                input.append(ord(c))
+                                ]
+                ])
+
+emu.on_press("enter", [
+                input.append(ord("\n"))
+])
+
+emu.on_press("space", [
+                input.append(ord(" "))
+])
+
+from PIL import Image, ImageFont, ImageDraw
+from io import BytesIO
+
+emu.add_costume("bg", BytesIO(b'<svg width="480" height="360"><rect width="100%" height="100%" fill="black" stroke="black"/></svg>').getvalue(), "svg", (240, 180))
+
+font = ImageFont.truetype("Hack.ttf", 32)
+
+for a in range(256):
+                image = Image.new("RGBA", (32, 128))
+                draw = ImageDraw.Draw(image)
+                draw.text((0, 0), chr(a), font=font)
+                buffer = BytesIO()
+                image.save(buffer, format="png")
+                buffer.seek(0)
+                emu.add_costume(a, buffer.getvalue(), "png")
+
+emu.add_costume("cursor", BytesIO(b'<svg width="8" height="1"><rect width="100%" height="100%" fill="white" stroke="transparent"/></svg>').getvalue(), "svg", (0, -15))
 
 project.save("out/risc-v.sb3")
