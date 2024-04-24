@@ -71,13 +71,62 @@ def clear_screen (locals): return [
                 uart.delete_all(),
                 x <= 0,
                 y <= 0,
+                SetSize(100),
                 SetCostume("bg"),
                 SetXYPos(0, 0),
                 Show(),
                 Stamp(),
+                SetSize(50),
                 SetXYPos(-240, 180),
                 SetCostume("cursor")
                 
+]
+
+# Credit to https://scratch.mit.edu/projects/24828481 for this algorithm
+
+@emu.proc_def()
+def draw_triangle (locals, Ax, Ay, Bx, By, Cx, Cy, res): return [
+                locals.lena <= (((Bx - Cx) * (Bx - Cx)) + ((By - Cy) * (By - Cy))).sqrt(),
+                locals.lenb <= (((Ax - Cx) * (Ax - Cx)) + ((Ay - Cy) * (Ay - Cy))).sqrt(),
+                locals.lenc <= (((Ax - Bx) * (Ax - Bx)) + ((Ay - By) * (Ay - By))).sqrt(),
+                locals.peri <= 1 / (locals.lena + locals.lenb + locals.lenc),
+                locals.incx <= ((locals.lena * Ax) + (locals.lenb * Bx) + (locals.lenc * Cx)) * locals.peri,
+                locals.incy <= ((locals.lena * Ay) + (locals.lenb * By) + (locals.lenc * Cy)) * locals.peri,
+                locals.ind <= ((locals.lenb + locals.lenc - locals.lena) * (locals.lenc + locals.lena - locals.lenb) * (locals.lena + locals.lenb - locals.lenc) * locals.peri).sqrt(),
+                locals.Aox <= locals.incx - Ax,
+                locals.Aoy <= locals.incy - Ay,
+                locals.Box <= locals.incx - Bx,
+                locals.Boy <= locals.incy - By,
+                locals.Cox <= locals.incx - Cx,
+                locals.Coy <= locals.incy - Cy,
+                If ((locals.lena < locals.lenb).AND(locals.lena < locals.lenc)) [
+                                locals.td <= ((locals.Aox * locals.Aox) + (locals.Aoy * locals.Aoy)).sqrt()
+                ].Else [
+                                If ((locals.lenb > locals.lena).OR(locals.lenb > locals.lenc)) [
+                                                locals.td <= ((locals.Cox * locals.Cox) + (locals.Coy * locals.Coy)).sqrt()
+                                ].Else [
+                                                locals.td <= ((locals.Box * locals.Box) + (locals.Boy * locals.Boy)).sqrt()
+                                ]
+                ],
+                locals.rate <= ((locals.td * 2) - locals.ind) / (locals.td * 4),
+                SetXYPos(locals.incx.round(), locals.incy.round()),
+                SetPenSize(locals.ind),
+                PenDown(),
+                locals.td <= 1,
+                Repeat (ceil((res / locals.ind).log() / locals.rate.log())) [
+                                locals.td <= locals.td * locals.rate,
+                                SetPenSize(locals.ind * locals.td),
+                                SetXYPos(locals.Aox * locals.td + Ax, locals.Aoy * locals.td + Ay),
+                                SetXYPos(locals.Box * locals.td + Bx, locals.Boy * locals.td + By),
+                                SetXYPos(locals.Cox * locals.td + Cx, locals.Coy * locals.td + Cy),
+                                SetXYPos(locals.Aox * locals.td + Ax, locals.Aoy * locals.td + Ay)
+                ],
+                SetPenSize(res),
+                SetXYPos(Ax, Ay),
+                SetXYPos(Bx, By),
+                SetXYPos(Cx, Cy),
+                SetXYPos(Ax, Ay),
+                PenUp()
 ]
 
 @emu.proc_def()
@@ -357,23 +406,48 @@ def hw_store8 (locals, addr, value): return [
                 ],
                 If (addr == 0x10002002) [
                                 SetPenParam("color", value / 256 * 100),
-                                PenDown(),
                                 StopThisScript()
                 ],
                 If (addr == 0x10002003) [
                                 If (value == 0) [
                                                 PenUp()
                                 ].Else [
-                                                SetPenSize(value)
+                                                SetPenSize(value),
+                                                PenDown()
                                 ],
                                 StopThisScript()
                 ],
                 If (addr == 0x10002004) [
-                                EraseAll(),
+                                clear_screen(),
                                 StopThisScript()
                 ],
                 If (addr == 0x10000000) [
-                                console_write(value).inline()
+                                console_write(value).inline(),
+                                StopThisScript()
+                ],
+                If (addr == 0x10003000) [
+                                locals.txa <= value,
+                                StopThisScript()
+                ],
+                If (addr == 0x10003001) [
+                                locals.tya <= value,
+                                StopThisScript()
+                ],
+                If (addr == 0x10003002) [
+                                locals.txb <= value,
+                                StopThisScript()
+                ],
+                If (addr == 0x10003003) [
+                                locals.tyb <= value,
+                                StopThisScript()
+                ],
+                If (addr == 0x10003004) [
+                                locals.txc <= value,
+                                StopThisScript()
+                ],
+                If (addr == 0x10003005) [
+                                draw_triangle(locals.txa * 1.88 - 240, locals.tya * 1.4 - 180, locals.txb * 1.88 - 240, locals.tyb * 1.4 - 180, locals.txc * 1.88 - 240, value * 1.4 - 180, 4),
+                                StopThisScript()
                 ]
 ]
 
@@ -1059,24 +1133,33 @@ def tick (locals): return [
                 execute(jit_index).inline()
 ]
 
-@emu.proc_def(inline_only=True)
+@emu.proc_def()
 def draw_char (locals, code): return [
                 If (code == 10) [
                                 y.changeby(1),
                                 x <= 0,
-                                SetXYPos(-240, -y * 16 + 180)
-                ].Else [
-                                SetCostume(code + 2),
+                                SetXYPos(-240, -y * 16 + 180),
+                                StopThisScript()
+                ],
+                If (code == 8) [
+                                If (x > 0) [
+                                                x.changeby(-1)
+                                ],
+                                SetXYPos(x * 8 - 240, -y * 16 + 180),
+                                SetCostume(Literal(32 + 2)),
                                 Stamp(),
-                                x.changeby(1),
-                                SetXYPos(x * 8 - 240, -y * 16 + 180)
-                ]
+                                StopThisScript()
+                ],
+                SetCostume(code + 2),
+                Stamp(),
+                x.changeby(1),
+                SetXYPos(x * 8 - 240, -y * 16 + 180)
 ]
 
 @emu.proc_def(inline_only=True)
 def append (locals): return [
                 RepeatUntil (uart.len() == 0) [
-                                draw_char(uart[0]).inline(),
+                                draw_char(uart[0]),
                                 uart.delete_at(0)
                 ],
                 SetCostume("cursor")
@@ -1086,13 +1169,14 @@ def append (locals): return [
 def redraw (locals): return [
                 clear_screen(),
                 locals.i[:history.len():1] >> [
-                                draw_char(history[locals.i]).inline()
+                                draw_char(history[locals.i])
                 ],
                 SetCostume("cursor")
 ]
 
 @emu.proc_def()
 def draw (locals): return [
+                SetXYPos(x * 8 - 240, -y * 16 + 180),
                 If (uart.len() > 0) [
                                 locals.scroll <= newlines - 20,
                                 If (locals.scroll > 0) [
@@ -1101,7 +1185,8 @@ def draw (locals): return [
                                 ].Else [
                                                 append().inline()
                                 ]
-                ]
+                ],
+                SetXYPos(x * 8 - 240, -y * 16 + 180)
 ]
 
 @emu.proc_def()
@@ -1148,22 +1233,26 @@ emu.on_press("space", [
                 input.append(ord(" "))
 ])
 
+emu.on_press("backspace", [
+                input.append(ord("\b"))
+])
+
 from PIL import Image, ImageFont, ImageDraw
 from io import BytesIO
 
 emu.add_costume("bg", BytesIO(b'<svg width="480" height="360"><rect width="100%" height="100%" fill="black" stroke="black"/></svg>').getvalue(), "svg", (240, 180))
 
-font = ImageFont.truetype("Hack.ttf", 32)
+font = ImageFont.truetype("Hack.ttf", 50)
 
 for a in range(256):
-                image = Image.new("RGBA", (32, 128))
+                image = Image.new("RGB", (32 - 2, 64 - 2), color='black')
                 draw = ImageDraw.Draw(image)
                 draw.text((0, 0), chr(a), font=font)
                 buffer = BytesIO()
                 image.save(buffer, format="png")
                 buffer.seek(0)
-                emu.add_costume(a, buffer.getvalue(), "png")
+                emu.add_costume("font" + str(a), buffer.getvalue(), "png")
 
-emu.add_costume("cursor", BytesIO(b'<svg width="8" height="1"><rect width="100%" height="100%" fill="white" stroke="transparent"/></svg>').getvalue(), "svg", (0, -15))
+emu.add_costume("cursor", BytesIO(b'<svg width="16" height="1"><rect width="100%" height="100%" fill="white" stroke="transparent"/></svg>').getvalue(), "svg", (0, -32 + 1))
 
 project.save("out/risc-v.sb3")
