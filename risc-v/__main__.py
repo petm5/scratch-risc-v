@@ -158,39 +158,42 @@ result = emu.new_var("_RESULT")
 
 @emu.proc_def(inline_only=True)
 def toSigned32 (locals, int): return [
-                If (int > 2147483647) [
-                                result <= -4294967296 + int
-                ].Else [
-                                result <= int
-                ]
+                result <= (int + 2147483648) % 4294967296 - 2147483648
+                # If (int > 2147483647) [
+                #                 result <= -4294967296 + int
+                # ].Else [
+                #                 result <= int
+                # ]
 ]
 
 @emu.proc_def(inline_only=True)
 def toSigned16 (locals, int): return [
-                If (int > 32767) [
-                                result <= -65536 + int
-                ].Else [
-                                result <= int
-                ]
+                result <= (int + 32768) % 65536 - 32768
+                # If (int > 32767) [
+                #                 result <= -65536 + int
+                # ].Else [
+                #                 result <= int
+                # ]
 ]
 
 @emu.proc_def(inline_only=True)
 def toSigned8 (locals, int): return [
-                If (int > 127) [
-                                result <= -256 + int
-                ].Else [
-                                result <= int
-                ]
+                result <= (int + 128) % 256 - 128
+                # If (int > 127) [
+                #                 result <= -256 + int
+                # ].Else [
+                #                 result <= int
+                # ]
 ]
 
 @emu.proc_def()
 def toUnsigned32 (locals, int): return [
-                If (int < 0) [
-                                result <= 4294967296 + int
-                ].Else [
-                                result <= int
-                ]
-                # result <= ((int + 2147483648) % 4294967296) - 2147483648 # Doesn't work?
+                result <= (int + 4294967296) % 4294967296
+                # If (int < 0) [
+                #                 result <= 4294967296 + int
+                # ].Else [
+                #                 result <= int
+                # ]
 ]
 
 ### ALU operations
@@ -364,7 +367,7 @@ def bus_load8 (locals, addr): return [
                 ]
 ]
 
-@emu.proc_def(inline_only=True)
+@emu.proc_def()
 def mem_store8 (locals, index, value): return [
                 dram[index] <= value,
                 jit[index*4] <= 0
@@ -459,10 +462,10 @@ def bus_store32 (locals, addr, value): return [
                                 hw_store8(addr + 2, (value >> 16) & 0xff),
                                 hw_store8(addr + 3, (value >> 24) & 0xff)
                 ].Else [
-                                mem_store8(addr - DRAM_BASE, value & 0xff).inline(),
-                                mem_store8(addr - DRAM_BASE + 1, (value >> 8) & 0xff).inline(),
-                                mem_store8(addr - DRAM_BASE + 2, (value >> 16) & 0xff).inline(),
-                                mem_store8(addr - DRAM_BASE + 3, (value >> 24) & 0xff).inline()
+                                mem_store8(addr - DRAM_BASE, value & 0xff),
+                                mem_store8(addr - DRAM_BASE + 1, (value >> 8) & 0xff),
+                                mem_store8(addr - DRAM_BASE + 2, (value >> 16) & 0xff),
+                                mem_store8(addr - DRAM_BASE + 3, (value >> 24) & 0xff)
                 ]
 ]
 
@@ -472,8 +475,8 @@ def bus_store16 (locals, addr, value): return [
                                 hw_store8(addr, value & 0xff),
                                 hw_store8(addr, (value >> 8) & 0xff)
                 ].Else [
-                                mem_store8(addr - DRAM_BASE, value & 0xff).inline(),
-                                mem_store8(addr - DRAM_BASE + 1, (value >> 8) & 0xff).inline()
+                                mem_store8(addr - DRAM_BASE, value & 0xff),
+                                mem_store8(addr - DRAM_BASE + 1, (value >> 8) & 0xff)
                 ]
 ]
 
@@ -829,6 +832,11 @@ def execute (locals, index): return [
                                 ],
                                 StopThisScript()
                 ],
+                If (locals.inst == 37) [ # auipc
+                                add(pc - 4, jit[index+3]).inline(),
+                                regs[jit[index+1]] <= result,
+                                StopThisScript()
+                ],
                 If (locals.inst == 40) [ # mul
                                 multiply(regs[jit[index+2]], regs[jit[index+3]]).inline(),
                                 regs[jit[index+1]] <= result,
@@ -892,11 +900,6 @@ def execute (locals, index): return [
                 ],
                 If (locals.inst == 36) [ # lui
                                 regs[jit[index+1]] <= jit[index+3],
-                                StopThisScript()
-                ],
-                If (locals.inst == 37) [ # auipc
-                                add(pc - 4, jit[index+3]).inline(),
-                                regs[jit[index+1]] <= result,
                                 StopThisScript()
                 ],
                 If (locals.inst == 1) [ # addi
