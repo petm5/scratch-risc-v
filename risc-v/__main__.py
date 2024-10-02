@@ -7,29 +7,25 @@ empty = project.new_sprite("empty")
 
 emu = project.new_sprite("RISCV32")
 
-DRAM_SIZE = 200000
+DRAM_SIZE = 0x44000
 DRAM_BASE = 0x80000000
 
-CODE_MAX = 100000
+CODE_MAX = 0x10000
+
+VIDEO_BASE = 0x80040000
 
 dram = emu.new_list("_DRAM", [0] * DRAM_SIZE)
 jit = emu.new_list("_JIT_CACHE", [0] * 4 * CODE_MAX)
 regs = emu.new_list("_REGS", [0] * 32)
-csrs = emu.new_list("_CSRS", [0] * 4096)
+# csrs = emu.new_list("_CSRS", [0] * 4096)
 pc = emu.new_var("_PC")
 ticks = emu.new_var("_TICKS")
 jit_index = emu.new_var("_JIT_INDEX")
+running = emu.new_var("_RUNNING")
 
-code = emu.new_list("_CODE", open("_CODE.txt", "r").readlines()) # , monitor=[240, 145, 120, 20]
+code = emu.new_list("_CODE", open("_CODE.txt", "r").readlines())
 
-uart = emu.new_list("_OUTPUT_BUF")
-input = emu.new_list("_INPUT_BUF")
-# history = emu.new_list("_OUTPUT_HIST")
-# newlines = emu.new_var("newlines")
-# h_lines = emu.new_var("history_lines")
-
-x = emu.new_var("x")
-y = emu.new_var("y")
+uart = emu.new_list("_UART")
 
 and_lut_contents = []
 for a in range(256):
@@ -68,9 +64,6 @@ base2_lut = emu.new_list("_BASE2_LUT", base2_lut_contents)
 
 @emu.proc_def(inline_only=True)
 def clear_screen (locals): return [
-                uart.delete_all(),
-                x <= 0,
-                y <= 0,
                 Show(),
                 SetSize(100),
                 SetCostume("bg"),
@@ -83,53 +76,6 @@ def clear_screen (locals): return [
                 Hide(),
                 
 ]
-
-# Credit to https://scratch.mit.edu/projects/24828481 for this algorithm
-
-# @emu.proc_def()
-# def draw_triangle (locals, Ax, Ay, Bx, By, Cx, Cy, res): return [
-#                 locals.lena <= (((Bx - Cx) * (Bx - Cx)) + ((By - Cy) * (By - Cy))).sqrt(),
-#                 locals.lenb <= (((Ax - Cx) * (Ax - Cx)) + ((Ay - Cy) * (Ay - Cy))).sqrt(),
-#                 locals.lenc <= (((Ax - Bx) * (Ax - Bx)) + ((Ay - By) * (Ay - By))).sqrt(),
-#                 locals.peri <= 1 / (locals.lena + locals.lenb + locals.lenc),
-#                 locals.incx <= ((locals.lena * Ax) + (locals.lenb * Bx) + (locals.lenc * Cx)) * locals.peri,
-#                 locals.incy <= ((locals.lena * Ay) + (locals.lenb * By) + (locals.lenc * Cy)) * locals.peri,
-#                 locals.ind <= ((locals.lenb + locals.lenc - locals.lena) * (locals.lenc + locals.lena - locals.lenb) * (locals.lena + locals.lenb - locals.lenc) * locals.peri).sqrt(),
-#                 locals.Aox <= locals.incx - Ax,
-#                 locals.Aoy <= locals.incy - Ay,
-#                 locals.Box <= locals.incx - Bx,
-#                 locals.Boy <= locals.incy - By,
-#                 locals.Cox <= locals.incx - Cx,
-#                 locals.Coy <= locals.incy - Cy,
-#                 If ((locals.lena < locals.lenb).AND(locals.lena < locals.lenc)) [
-#                                 locals.td <= ((locals.Aox * locals.Aox) + (locals.Aoy * locals.Aoy)).sqrt()
-#                 ].Else [
-#                                 If ((locals.lenb > locals.lena).OR(locals.lenb > locals.lenc)) [
-#                                                 locals.td <= ((locals.Cox * locals.Cox) + (locals.Coy * locals.Coy)).sqrt()
-#                                 ].Else [
-#                                                 locals.td <= ((locals.Box * locals.Box) + (locals.Boy * locals.Boy)).sqrt()
-#                                 ]
-#                 ],
-#                 locals.rate <= ((locals.td * 2) - locals.ind) / (locals.td * 4),
-#                 SetXYPos(locals.incx.round(), locals.incy.round()),
-#                 SetPenSize(locals.ind),
-#                 PenDown(),
-#                 locals.td <= 1,
-#                 Repeat (ceil((res / locals.ind).log() / locals.rate.log())) [
-#                                 locals.td <= locals.td * locals.rate,
-#                                 SetPenSize(locals.ind * locals.td),
-#                                 SetXYPos(locals.Aox * locals.td + Ax, locals.Aoy * locals.td + Ay),
-#                                 SetXYPos(locals.Box * locals.td + Bx, locals.Boy * locals.td + By),
-#                                 SetXYPos(locals.Cox * locals.td + Cx, locals.Coy * locals.td + Cy),
-#                                 SetXYPos(locals.Aox * locals.td + Ax, locals.Aoy * locals.td + Ay)
-#                 ],
-#                 SetPenSize(res),
-#                 SetXYPos(Ax, Ay),
-#                 SetXYPos(Bx, By),
-#                 SetXYPos(Cx, Cy),
-#                 SetXYPos(Ax, Ay),
-#                 PenUp()
-# ]
 
 @emu.proc_def()
 def reset (locals): return [
@@ -237,46 +183,36 @@ def mem_load8 (locals, index): return [
 
 @emu.proc_def()
 def hw_load8 (locals, addr): return [
-                If (addr == 0x10000000) [
-                                bus_result <= input[0],
-                                input.delete_at(0),
-                                StopThisScript()
-                ],
+                # If (addr == 0x10000000) [
+                #                 bus_result <= input[0],
+                #                 input.delete_at(0),
+                #                 StopThisScript()
+                # ],
                 # If (addr == 0x10000005) [
                 #                 bus_result <= abs(input.len() > 0),
                 #                 StopThisScript()
                 # ]
 ]
 
-@emu.proc_def(inline_only=True)
+@emu.proc_def()
 def bus_load32 (locals, addr): return [
                 If (addr < DRAM_BASE) [
                                 hw_load8(addr),
-                                locals.result <= bus_result,
-                                hw_load8(addr),
-                                locals.result <= locals.result + (bus_result << 8),
-                                hw_load8(addr),
-                                locals.result <= locals.result + (bus_result << 16),
-                                hw_load8(addr),
-                                bus_result <= locals.result + (bus_result << 24)
                 ].Else [
                                 mem_load32(addr - DRAM_BASE).inline()
                 ]
 ]
 
-@emu.proc_def(inline_only=True)
+@emu.proc_def()
 def bus_load16 (locals, addr): return [
                 If (addr < DRAM_BASE) [
                                 hw_load8(addr),
-                                locals.result <= bus_result,
-                                hw_load8(addr),
-                                bus_result <= locals.result + (bus_result << 8)
                 ].Else [
                                 mem_load16(addr - DRAM_BASE).inline()
                 ]
 ]
 
-@emu.proc_def(inline_only=True)
+@emu.proc_def()
 def bus_load8 (locals, addr): return [
                 If (addr < DRAM_BASE) [
                                 hw_load8(addr)
@@ -291,94 +227,18 @@ def mem_store8 (locals, index, value): return [
                 jit[index*4] <= 0
 ]
 
-@emu.proc_def(inline_only=True)
-def prune_history (locals): return [
-                Repeat (h_lines-20) [
-                                RepeatUntil (history[0] == 10) [
-                                                history.delete_at(0)
-                                ],
-                                history.delete_at(0)
-                ],
-                h_lines <= 20
-]
-
-@emu.proc_def(inline_only=True)
-def console_write (locals, value): return [
-                uart.append(value),
-                # history.append(value),
-                # If (value == 10) [
-                #                 newlines.changeby(1),
-                #                 h_lines.changeby(1),
-                #                 If (h_lines > 20) [
-                #                                 prune_history().inline()
-                #                 ]
-                # ]
+@emu.proc_def()
+def hw_store8 (locals, addr, value): return [
+                If (addr == 0x10000000) [
+                                uart.append(value),
+                                StopThisScript()
+                ]
 ]
 
 @emu.proc_def()
-def hw_store8 (locals, addr, value): return [
-                If (addr == 0x10002000) [
-                                locals.x <= value,
-                                StopThisScript()
-                ],
-                If (addr == 0x10002001) [
-                                SetXYPos(locals.x * 1.88 - 240, value * 1.4 - 180),
-                                StopThisScript()
-                ],
-                If (addr == 0x10002002) [
-                                SetPenParam("color", value / 256 * 100),
-                                StopThisScript()
-                ],
-                If (addr == 0x10002003) [
-                                If (value == 0) [
-                                                PenUp()
-                                ].Else [
-                                                SetPenSize(value),
-                                                PenDown()
-                                ],
-                                StopThisScript()
-                ],
-                # If (addr == 0x10002004) [
-                #                 clear_screen(),
-                #                 StopThisScript()
-                # ],
-                If (addr == 0x10000000) [
-                                console_write(value).inline(),
-                                StopThisScript()
-                ],
-                # If (addr == 0x10003000) [
-                #                 locals.txa <= value,
-                #                 StopThisScript()
-                # ],
-                # If (addr == 0x10003001) [
-                #                 locals.tya <= value,
-                #                 StopThisScript()
-                # ],
-                # If (addr == 0x10003002) [
-                #                 locals.txb <= value,
-                #                 StopThisScript()
-                # ],
-                # If (addr == 0x10003003) [
-                #                 locals.tyb <= value,
-                #                 StopThisScript()
-                # ],
-                # If (addr == 0x10003004) [
-                #                 locals.txc <= value,
-                #                 StopThisScript()
-                # ],
-                # If (addr == 0x10003005) [
-                #                 draw_triangle(locals.txa * 1.88 - 240, locals.tya * 1.4 - 180, locals.txb * 1.88 - 240, locals.tyb * 1.4 - 180, locals.txc * 1.88 - 240, value * 1.4 - 180, 4),
-                #                 StopThisScript()
-                # ]
-]
-
-@emu.proc_def(inline_only=True)
 def bus_store32 (locals, addr, value): return [
                 If (addr < DRAM_BASE) [
-                                hw_store8(addr, value & 0xff),
-                                hw_store8(addr + 1, (value >> 8) & 0xff),
-                                hw_store8(addr + 2, (value >> 16) & 0xff),
-                                hw_store8(addr + 3, (value >> 24) & 0xff)
+                                hw_store8(addr, value & 0xff)
                 ].Else [
                                 mem_store8(addr - DRAM_BASE, value & 0xff),
                                 mem_store8(addr - DRAM_BASE + 1, (value >> 8) & 0xff),
@@ -387,18 +247,17 @@ def bus_store32 (locals, addr, value): return [
                 ]
 ]
 
-@emu.proc_def(inline_only=True)
+@emu.proc_def()
 def bus_store16 (locals, addr, value): return [
                 If (addr < DRAM_BASE) [
-                                hw_store8(addr, value & 0xff),
-                                hw_store8(addr, (value >> 8) & 0xff)
+                                hw_store8(addr, value & 0xff)
                 ].Else [
                                 mem_store8(addr - DRAM_BASE, value & 0xff),
                                 mem_store8(addr - DRAM_BASE + 1, (value >> 8) & 0xff)
                 ]
 ]
 
-@emu.proc_def(inline_only=True)
+@emu.proc_def()
 def bus_store8 (locals, addr, value): return [
                 If (addr < DRAM_BASE) [
                                 hw_store8(addr, value & 0xff).inline()
@@ -409,8 +268,8 @@ def bus_store8 (locals, addr, value): return [
 
 @emu.proc_def(inline_only=True)
 def fetch (locals, pc): return [
-                locals.index <= pc - DRAM_BASE,
-                mem_load32(locals.index).inline()
+                locals.addr <= pc - DRAM_BASE,
+                mem_load32(locals.addr).inline()
 ]
 
 ### Decoders
@@ -447,13 +306,13 @@ def decode_i_type_unsigned (locals, inst): return [
                 jit[jit_index+3] <= toUnsigned32(toSigned32(inst).inline() >> 20).inline() # imm
 ]
 
-@emu.proc_def(inline_only=True)
-def decode_i_type_csr (locals, inst): return [
-                jit[jit_index+1] <= (inst >> 7) & 0x1f, # rd
-                jit[jit_index+2] <= (inst >> 15) & 0x1f, # rs1
-                locals.funct3 <= (inst >> 12) & 0x7,
-                jit[jit_index+3] <= inst >> 20 # imm
-]
+# @emu.proc_def(inline_only=True)
+# def decode_i_type_csr (locals, inst): return [
+#                 jit[jit_index+1] <= (inst >> 7) & 0x1f, # rd
+#                 jit[jit_index+2] <= (inst >> 15) & 0x1f, # rs1
+#                 locals.funct3 <= (inst >> 12) & 0x7,
+#                 jit[jit_index+3] <= inst >> 20 # imm
+# ]
 
 @emu.proc_def(inline_only=True)
 def decode_s_type (locals, inst): return [
@@ -483,7 +342,7 @@ def decode_j_type (locals, inst): return [
                 jit[jit_index+3] <= ((toSigned32(inst).inline() >> 31) << 20) + (((inst >> 12) & 0xff) << 12) + (((inst >> 20) & 0x01) << 11) + (((inst >> 21) & 0x03ff) << 1) # imm
 ]
 
-@emu.proc_def(inline_only=True)
+@emu.proc_def()
 def jit_compile (locals, inst): return [
                 locals.opcode <= inst & 0x7f,
                 If (locals.opcode == 0b0010011) [
@@ -845,41 +704,47 @@ execute_instrs = {
                                 regs[jit[jit_index+1]] <= less_than_unsigned(regs[jit[jit_index+2]], regs[jit[jit_index+3]]).inline(),
                 ],
                 26: [ # lb
-                                bus_load8(add(regs[jit[jit_index+2]], jit[jit_index+3]).inline()).inline(),
+                                bus_load8(add(regs[jit[jit_index+2]], jit[jit_index+3]).inline()),
                                 regs[jit[jit_index+1]] <= toUnsigned32(toSigned8(bus_result).inline()).inline(),
                 ],
                 27: [ # lh
-                                bus_load16(add(regs[jit[jit_index+2]], jit[jit_index+3]).inline()).inline(),
+                                bus_load16(add(regs[jit[jit_index+2]], jit[jit_index+3]).inline()),
                                 regs[jit[jit_index+1]] <= toUnsigned32(toSigned16(bus_result).inline()).inline(),
                 ],
                 28: [ # lw
-                                bus_load32(add(regs[jit[jit_index+2]], jit[jit_index+3]).inline()).inline(),
+                                bus_load32(add(regs[jit[jit_index+2]], jit[jit_index+3]).inline()),
                                 regs[jit[jit_index+1]] <= bus_result,
                 ],
                 29: [ # lbu
-                                bus_load8(add(regs[jit[jit_index+2]], jit[jit_index+3]).inline()).inline(),
+                                bus_load8(add(regs[jit[jit_index+2]], jit[jit_index+3]).inline()),
                                 regs[jit[jit_index+1]] <= bus_result,
                 ],
                 30: [ # lhu
-                                bus_load16(add(regs[jit[jit_index+2]], jit[jit_index+3]).inline()).inline(),
+                                bus_load16(add(regs[jit[jit_index+2]], jit[jit_index+3]).inline()),
                                 regs[jit[jit_index+1]] <= bus_result,
                 ],
                 31: [ # sb
-                                bus_store8(add(regs[jit[jit_index+1]], jit[jit_index+3]).inline(), regs[jit[jit_index+2]]).inline(),
+                                bus_store8(add(regs[jit[jit_index+1]], jit[jit_index+3]).inline(), regs[jit[jit_index+2]]),
                 ],
                 32: [ # sh
-                                bus_store16(add(regs[jit[jit_index+1]], jit[jit_index+3]).inline(), regs[jit[jit_index+2]]).inline(),
+                                bus_store16(add(regs[jit[jit_index+1]], jit[jit_index+3]).inline(), regs[jit[jit_index+2]]),
                 ],
                 33: [ # sw
-                                bus_store32(add(regs[jit[jit_index+1]], jit[jit_index+3]).inline(), regs[jit[jit_index+2]]).inline(),
+                                bus_store32(add(regs[jit[jit_index+1]], jit[jit_index+3]).inline(), regs[jit[jit_index+2]]),
                 ],
+                38: [
+                                running <= 0,
+                ]
 }
 
 @emu.proc_def(inline_only=True)
-def execute (locals): return compile_match(jit[jit_index], execute_instrs)
+def execute (locals): return [
+                locals.inst <= jit[jit_index],
+                compile_match(locals.inst, execute_instrs)
+]
 
 # Compile a match operation from a dictionary mapping cases to instructions
-# makes use of a binary search to improve performance
+# Makes use of a binary search to improve performance (worst-case complexity: O(log n) rather than O(n))
 def compile_match (value, instrs_dict):
                 return compile_match_recurse(value, list(sorted(instrs_dict.items())))
 
@@ -888,136 +753,51 @@ def compile_match_recurse (value, instrs):
                 if length > 1:
                                 half_length = floor(length / 2)
                                 search_inst = instrs[half_length][0] - 1
-                                return [ If ((value > search_inst), compile_match_recurse(value, instrs[half_length:])).Else [compile_match_recurse(value, instrs[:half_length])] ]
+                                return If ((value > search_inst), [compile_match_recurse(value, instrs[half_length:])]).Else [compile_match_recurse(value, instrs[:half_length])]
                 elif length == 1:
                                 return instrs[0][1]
-
-# @emu.proc_def()
-# def to_hex (locals, value): return [
-#                 locals.result <= hex_lut[(value >> 28) & 0xf]
-#                                 .join(hex_lut[(value >> 24) & 0xf])
-#                                 .join(hex_lut[(value >> 20) & 0xf])
-#                                 .join(hex_lut[(value >> 16) & 0xf])
-#                                 .join(hex_lut[(value >> 12) & 0xf])
-#                                 .join(hex_lut[(value >> 8) & 0xf])
-#                                 .join(hex_lut[(value >> 4) & 0xf])
-#                                 .join(hex_lut[value & 0xf])
-# ]
-
-# @emu.proc_def()
-# def breakpoint (locals): return [
-#                 If (execute.matched == 0) [
-#                                 uart.append("* Unknown instruction encountered")
-#                 ],
-#                 If (pc - DRAM_BASE > DRAM_SIZE) [
-#                                 uart.append("* PC exceeded DRAM size"),
-#                                 uart.append(Literal("PC: ").join(pc)),
-#                                 uart.append(Literal("DRAM_BASE: ").join(DRAM_BASE)),
-#                                 uart.append(Literal("DRAM_SIZE: ").join(DRAM_SIZE))
-#                 ],
-#                 If (pc == 0) [
-#                                 uart.append("* Jump to null address")
-#                 ],
-#                 to_hex(pc),
-#                 uart.append(Literal("PC: ").join(to_hex.result)),
-#                 to_hex(locals.old_pc),
-#                 uart.append(Literal("Prev PC: ").join(to_hex.result)),
-#                 fetch(pc).inline(),
-#                 to_hex(bus_result),
-#                 uart.append(Literal("bus: ").join(to_hex.result)),
-#                 uart.append(Literal("tick: ").join(ticks)),
-#                 uart.append(Literal("jit0: ").join(jit[jit_index])),
-#                 uart.append(Literal("jit1: ").join(jit[jit_index+1])),
-#                 uart.append(Literal("jit2: ").join(jit[jit_index+2])),
-#                 uart.append(Literal("jit3: ").join(jit[jit_index+3])),
-#                 uart.append("--- Registers ---"),
-#                 locals.i[:regs.len():1] >> [
-#                                 to_hex(regs[locals.i]),
-#                                 uart.append(locals.i.join(": 0x").join(to_hex.result))
-#                 ],
-#                 StopAll()
-# ]
 
 @emu.proc_def()
 def tick (locals): return [
                 ticks <= ticks + 1,
-                # If ((pc - DRAM_BASE > DRAM_SIZE).OR(pc == 0)) [
-                #                 breakpoint()   
-                # ],
                 regs[0] <= 0,
                 jit_index <= (pc - DRAM_BASE) * 4,
                 If (jit[jit_index] == 0) [
                                 fetch(pc).inline(),
-                                jit_compile(bus_result).inline(),
+                                jit_compile(bus_result),
                 ],
-                # breakpoint.old_pc <= pc,
                 pc <= pc + 4,
-                execute().inline()
+                execute().inline(),
 ]
 
-# @emu.proc_def()
-# def draw_char (locals, code): return [
-#                 If (code == 10) [
-#                                 y.changeby(1),
-#                                 x <= 0,
-#                                 SetXYPos(-240, -y * 16 + 180),
-#                                 StopThisScript()
-#                 ],
-#                 If (code == 8) [
-#                                 If (x > 0) [
-#                                                 x.changeby(-1)
-#                                 ],
-#                                 SetXYPos(x * 8 - 240, -y * 16 + 180),
-#                                 SetCostume(Literal(32 + 2)),
-#                                 Stamp(),
-#                                 StopThisScript()
-#                 ],
-#                 SetCostume(code + 2),
-#                 Stamp(),
-#                 x.changeby(1),
-#                 SetXYPos(x * 8 - 240, -y * 16 + 180)
-# ]
-
-# @emu.proc_def(inline_only=True)
-# def append (locals): return [
-#                 RepeatUntil (uart.len() == 0) [
-#                                 draw_char(uart[0]),
-#                                 uart.delete_at(0)
-#                 ],
-#                 SetCostume("cursor")
-# ]
-
-# @emu.proc_def(inline_only=True)
-# def redraw (locals): return [
-#                 clear_screen(),
-#                 locals.i[:history.len():1] >> [
-#                                 draw_char(history[locals.i])
-#                 ],
-#                 SetCostume("cursor")
-# ]
-
-# @emu.proc_def()
-# def draw (locals): return [
-#                 SetXYPos(x * 8 - 240, -y * 16 + 180),
-#                 If (uart.len() > 0) [
-#                                 locals.scroll <= newlines - 20,
-#                                 If (locals.scroll > 0) [
-#                                                 redraw().inline(),
-#                                                 newlines <= 20
-#                                 ].Else [
-#                                                 append().inline()
-#                                 ]
-#                 ],
-#                 SetXYPos(x * 8 - 240, -y * 16 + 180)
-# ]
+@emu.proc_def(inline_only=True)
+def draw (locals): return [
+                locals.index <= VIDEO_BASE - DRAM_BASE,
+                locals.y <= 180 - 4,
+                SetPenSize(11),
+                Show(),
+                Repeat (48) [
+                                locals.x <= -240 + 4,
+                                Repeat (64) [
+                                                SetXYPos(locals.x, locals.y),
+                                                SetPenColour(dram[locals.index] * 65536 + dram[locals.index+1] * 256 + dram[locals.index+2]),
+                                                PenDown(),
+                                                PenUp(),
+                                                locals.index <= locals.index + 4,
+                                                locals.x <= locals.x + 7.5,
+                                ],
+                                locals.y <= locals.y - 7.5,
+                ],
+                Hide()
+]
 
 @emu.proc_def()
 def loop (locals): return [
-                execute.running <= 1,
+                running <= 1,
                 Repeat (100000) [
                                 tick(),
-                                If (execute.running == 0) [
-                                                # draw().inline(),
+                                If (running == 0) [
+                                                draw().inline(),
                                                 StopThisScript()
                                 ]
                 ]
@@ -1030,51 +810,8 @@ emu.on_flag([
             ]
 ])
 
-# symbols = '!"#$%&\'()*+,-./0123456789:;<=>?@[\\]^_`{}'
-# lowercase = 'abcdefghijklmnopqrstuvwxyz'
-
-# for c in symbols:
-#                 emu.on_press(c, [
-#                                 input.append(ord(c))
-#                 ])
-
-# for c in lowercase:
-#                 emu.on_press(c, [
-#                                 If (KeyPressed("shift")) [
-#                                                 input.append(ord(c.upper()))
-#                                 ].Else [
-#                                                 input.append(ord(c))
-#                                 ]
-#                 ])
-
-# emu.on_press("enter", [
-#                 input.append(ord("\n"))
-# ])
-
-# emu.on_press("space", [
-#                 input.append(ord(" "))
-# ])
-
-# emu.on_press("backspace", [
-#                 input.append(ord("\b"))
-# ])
-
-# from PIL import Image, ImageFont, ImageDraw
 from io import BytesIO
 
 emu.add_costume("bg", BytesIO(b'<svg width="480" height="360"><rect width="100%" height="100%" fill="black" stroke="black"/></svg>').getvalue(), "svg", (240, 180))
-
-# font = ImageFont.truetype("Hack.ttf", 50)
-
-# for a in range(256):
-#                 image = Image.new("RGB", (32 - 2, 64 - 2), color='black')
-#                 draw = ImageDraw.Draw(image)
-#                 draw.text((0, 0), chr(a), font=font)
-#                 buffer = BytesIO()
-#                 image.save(buffer, format="png")
-#                 buffer.seek(0)
-#                 emu.add_costume("font" + str(a), buffer.getvalue(), "png")
-
-# emu.add_costume("cursor", BytesIO(b'<svg width="16" height="1"><rect width="100%" height="100%" fill="white" stroke="transparent"/></svg>').getvalue(), "svg", (0, -32 + 1))
 
 project.save("out/risc-v.sb3")
